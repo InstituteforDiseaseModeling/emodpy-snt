@@ -1,18 +1,18 @@
 import os
-import pathlib
+import shutil
 from sys import platform
-from pathlib import Path
-from tempfile import mkstemp
-from shutil import move, copymode
-from os import fdopen, remove
 from update_lines import update_parameters_in_file
+import emod_malaria.bootstrap as dtk
+# PLEASE NOTE: This file cannot run on multiple cores, the sharing of the update_parameters_in_file function
+# between rules creates catastrophic issues
 
 dirs = os.listdir()
 input_files = list()
 
 config['python_version'] = 0
 
-def get_command(script="run_simulations.py", python_version: str=None):
+
+def get_command(script="run_simulations.py", python_version: str = None):
     # using pushd (i.e. cd into directory) to use script location as base dir, otherwise relative
     # paths in script use snakemake dir as base
     if python_version:
@@ -23,175 +23,217 @@ def get_command(script="run_simulations.py", python_version: str=None):
         command = "python " + script
     else:
         print("Unknown OS")
-        raise Exception  
+        raise Exception
     return command
-    
-#
-# # monique\\calibration\\baseline_calibration\\ run
-baseline_calibration = r"monique\\calibration\\baseline_calibration\\"
+
+
+# doing it manually because... too complicated otherwise? re
+expected_outputs = [
+                    r"monique/calibration/baseline_calibration/01_serialize_transmission_sweep/experiment_id.txt",
+                    r"monique/calibration/baseline_calibration/02_run_transmission_sweep/experiment_id.txt",
+                    r"monthly_U5_PfPR.csv",
+                    r"../data/example_files/simulation_output/calibration/baseline_calibration/LL_allxLH_each_admin_run/CC_run3.csv",
+                    r"../data/example_files/simulation_inputs/larval_habitats/monthly_habitats_1.csv",
+                    r"monique/calibration/seasonality_calibration/01_burnin_for_seasonalityCalib/experiment_id.txt",
+                    r"monique/calibration/seasonality_calibration/02_seasonality_calibration/experiment_id.txt",
+                    r"monique/run_to_present/experiment_id.txt",
+                    r"monique/run_future_scenarios/experiment_id.txt",
+                    r"ben/example/run_1960-2004/experiment_id.txt",
+                    r"ben/example/run_2005-2022/experiment_id.txt"]
+
+
+def delete_outputs(outputs):
+    for output_file in outputs:
+        if os.path.exists(output_file):
+            os.remove(output_file)
+
+download_folder = r"../download"
+onstart:
+    if not os.path.exists(download_folder + r"/schema.json"):
+        dtk.setup(download_folder)
+        os.chdir(os.path.dirname(__file__))
+    delete_outputs(expected_outputs)
+
+rule all:
+    input: expected_outputs
+    default_target: True
+
+# # monique/calibration/baseline_calibration/ run
+baseline_calibration = r"monique/calibration/baseline_calibration/"
 rule serialize_transmission_sweep:
-    input: baseline_calibration + r"01_serialize_transmission_sweep\\params.py",
-           baseline_calibration + r"01_serialize_transmission_sweep\\manifest.py"
-    output:
-        touch(baseline_calibration + r"01_serialize_transmission_sweep\\experiment_id.txt")
+    input: baseline_calibration + r"01_serialize_transmission_sweep/params.py",
+           baseline_calibration + r"01_serialize_transmission_sweep/manifest.py",
+           baseline_calibration+ r"01_serialize_transmission_sweep/config_sweep_builders.py"
+    output: touch(baseline_calibration + r"01_serialize_transmission_sweep/experiment_id.txt")
     run:
-        update_parameters_in_file(input[0], {"years = 30": f"years = 10\n",
-                                             "num_seeds = ": "num_seeds = 1\n" })
-        update_parameters_in_file(input[1], {"USER_PATH = ": f"USER_PATH = r'..\data'\n",
-                                             "sif_id = None": "sif_id = 'dtk_sif.id'\n"})
-        shell(get_command(script=baseline_calibration + r"01_serialize_transmission_sweep\\run_simulations.py",
-                          python_version=config['python_version']))
+        update_parameters_in_file(input[0],{"years = 30": f"years = 10\n",
+                                            "num_seeds = ": "num_seeds = 1\n",
+                                            "population_size =": "population_size = 2000\n"})
+        update_parameters_in_file(input[1],{"USER_PATH = ": f"USER_PATH = r'../data'\n",
+                                            "sif_id = None": "sif_id = 'dtk_sif.id'\n"})
+        update_parameters_in_file(input[2],{"rep_admin:": f"        rep_admin: [np.logspace(-1.6, 2, 25)[ii] for ii in [0, 4]] for rep_admin in\n"})
+        shell(get_command(script=baseline_calibration + r"01_serialize_transmission_sweep/run_simulations.py",
+            python_version=config['python_version']))
 
 rule run_transmission_sweep:
-    input: baseline_calibration + r"01_serialize_transmission_sweep\\experiment_id.txt",
-            baseline_calibration + r"02_run_transmission_sweep\\params.py",
-            baseline_calibration + r"02_run_transmission_sweep\\manifest.py",
-    output: touch(baseline_calibration + r"02_run_transmission_sweep\\experiment_id.txt")
+    input: baseline_calibration + r"01_serialize_transmission_sweep/experiment_id.txt",
+           baseline_calibration + r"02_run_transmission_sweep/params.py",
+           baseline_calibration + r"02_run_transmission_sweep/manifest.py",
+           baseline_calibration + r"02_run_transmission_sweep/config_sweep_builders.py"
+    output: touch(baseline_calibration + r"02_run_transmission_sweep/experiment_id.txt")
     run:
         with open(input[0]) as exp_id_file:
             burnin_id = exp_id_file.read()
-        update_parameters_in_file(input[1], {"burnin_id = =": f"burnin_id = '{burnin_id}'\n",
-                                              "num_seeds = ": "num_seeds = 1\n",
-                                              "num_burnin_seeds = ": "num_burnin_seeds = 1\n"})
-        update_parameters_in_file(input[2], {"USER_PATH = ": f"USER_PATH = r'..\data'\n",
-                                             "sif_id = None": "sif_id = 'dtk_sif.id'\n"})
-        shell(get_command(script=baseline_calibration + r"02_run_transmission_sweep\\run_simulations.py",
-                          python_version=config['python_version']))
+        update_parameters_in_file(input[1],{"burnin_id = ": f"burnin_id = '{burnin_id}'\n",
+                                            "num_seeds = ": "num_seeds = 1\n",
+                                            "num_burnin_seeds = ": "num_burnin_seeds = 1\n",
+                                            "population_size =": "population_size = 2000\n"})
+        update_parameters_in_file(input[2],{"USER_PATH = ": f"USER_PATH = r'../data'\n",
+                                            "sif_id = None": "sif_id = 'dtk_sif.id'\n"})
+        update_parameters_in_file(input[3],{"rep_admin:": f"        rep_admin: [np.logspace(-1.6, 2, 25)[ii] for ii in [0, 4]] for rep_admin in\n"})
+        shell(get_command(script=baseline_calibration + r"02_run_transmission_sweep/run_simulations.py",
+            python_version=config['python_version']))
 
 rule analyze_ssmt_monthy_U5_PfPR:
-    input: baseline_calibration + r"02_run_transmission_sweep\\experiment_id.txt",
-            baseline_calibration + r"03_analyze_ssmt_monthly_U5_PfPR.py"
+    input: baseline_calibration + r"02_run_transmission_sweep/experiment_id.txt",
+           baseline_calibration + r"03_analyze_ssmt_monthly_U5_PfPR.py"
     output: touch(r"monthly_U5_PfPR.csv")
-    default_target: True
     run:
         with open(input[0]) as exp_id_file:
             burnin_id = exp_id_file.read()
             update_parameters_in_file(input[1],
                 {"experiments = ": f"experiments = {{'PfPR_sweep_main_example': '{burnin_id}'}}\n"})
         shell(get_command(script=baseline_calibration + r"03_analyze_ssmt_monthly_U5_PfPR.py",
-                          python_version=config['python_version']))
+            python_version=config['python_version']))
 
 rule find_best_xLH_fits:
     output:
-        touch(r"..\\data\\example_files\\simulation_output\\calibration\\baseline_calibration\\LL_allxLH_each_admin_run\\CC_run3.csv")
-    default_target: True
+        touch(r"../data/example_files/simulation_output/calibration/baseline_calibration/LL_allxLH_each_admin_run/CC_run3.csv")
     run:
-        shell(get_command(script=r"monique\\calibration\\baseline_calibration\\04_find_best_xLH_fits.py",
-                          python_version=config['python_version']))
+        shell(get_command(script=r"monique/calibration/baseline_calibration/04_find_best_xLH_fits.py",
+            python_version=config['python_version']))
 
 
-# monique\\calibration\\baseline_calibration\\ run
-seasonality_cal = r"monique\\calibration\\seasonality_calibration\\"
+# monique/calibration/baseline_calibration/ run
+seasonality_cal = r"monique/calibration/seasonality_calibration/"
+
 rule burnin_for_seasonalityCalib:
-    input: seasonality_cal + r"01_burnin_for_seasonalityCalib\\params.py",
-        seasonality_cal + r"01_burnin_for_seasonalityCalib\\manifest.py"
+    input: seasonality_cal + r"01_burnin_for_seasonalityCalib/params.py",
+           seasonality_cal + r"01_burnin_for_seasonalityCalib/manifest.py"
     output:
-        touch(seasonality_cal + r"01_burnin_for_seasonalityCalib\\experiment_id.txt")
+        touch(seasonality_cal + r"01_burnin_for_seasonalityCalib/experiment_id.txt")
     run:
-        update_parameters_in_file(input[0], {"years = 20": f"years = 5\n"})
-        update_parameters_in_file(input[1], {"USER_PATH = ": f"USER_PATH = r'..\data'\n",
-                                             "sif_id = None": "sif_id = 'dtk_sif.id'\n"})
-        shell(get_command(script=seasonality_cal + r"01_burnin_for_seasonalityCalib\\run_simulations.py",
-                          python_version=config['python_version']))
+        update_parameters_in_file(input[0],{"years = 20": f"years = 5\n",
+                                            "simulation_pop =": "simulation_pop = 2000\n"})
+        update_parameters_in_file(input[1],{"USER_PATH = ": f"USER_PATH = r'../data'\n",
+                                            "sif_id = None": "sif_id = 'dtk_sif.id'\n"})
+        shell(get_command(script=seasonality_cal + r"01_burnin_for_seasonalityCalib/run_simulations.py",
+            python_version=config['python_version']))
 
 
 rule seasonality_calibration:
-    input: seasonality_cal + r"01_burnin_for_seasonalityCalib\\experiment_id.txt",
-            seasonality_cal + r"02_seasonality_calibration\\params.py"
+    input: seasonality_cal + r"01_burnin_for_seasonalityCalib/experiment_id.txt",
+           seasonality_cal + r"02_seasonality_calibration/params.py",
+           seasonality_cal + r"02_seasonality_calibration/manifest.py"
     output:
-        touch(seasonality_cal + r"02_seasonality_calibration\\experiment_id.txt")
-    default_target: True
+        touch(seasonality_cal + r"02_seasonality_calibration/experiment_id.txt")
     run:
         with open(input[0]) as exp_id_file:
             burnin_id = exp_id_file.read()
-        update_parameters_in_file(input[1],{"burnin_ids = {{": f"burnin_ids = {{'AA': '{burnin_id}'}}\n"})
-        shell(get_command(script=seasonality_cal + r"01_serialize_transmission_sweep\\run_simulations.py",
-                          python_version=config['python_version']))
+        update_parameters_in_file(input[1],{"burnin_ids =": f"burnin_ids = {{'AA': '{burnin_id}'}}\n",
+                                            "burnin_years = ": "    burnin_years = 5\n",
+                                            "simulation_pop =": "simulation_pop = 2000\n"})
+        update_parameters_in_file(input[2],{"USER_PATH = ": f"USER_PATH = r'../data'\n",
+                                            "sif_id = None": "sif_id = 'dtk_sif.id'\n"})
+        calibra_folder = r"monique/calibration/seasonality_calibration/Calibra"
+        if os.path.exists(calibra_folder):
+            shutil.rmtree(calibra_folder)
+        shell(get_command(script=r"monique/calibration/seasonality_calibration/02_seasonality_calibration/run_calibration.py",
+            python_version=config['python_version']))
 
 rule save_best_seasonality_fit:
-    input: seasonality_cal + r"\03_save_best_seasonality_fit.py"
+    input: seasonality_cal + r"/03_save_best_seasonality_fit.py"
     output:
-        touch(r"..\\data\\example_files\\simulation_inputs\\larval_habitats\\monthly_habitats_1.csv")
-    default_target: True
+        touch(r"../data/example_files/simulation_inputs/larval_habitats/monthly_habitats_1.csv")
     run:
-        update_parameters_in_file(input[0], {"USER_PATH = ": f"USER_PATH = r'..\data'\n"})
+        update_parameters_in_file(input[0],{"USER_PATH = ": f"USER_PATH = r'../data'\n"})
         shell(get_command(script=seasonality_cal + r"03_save_best_seasonality_fit.py",
-                          python_version=config['python_version']))
+            python_version=config['python_version']))
 
 # run to present
-run_to_pre = r"monique\\run_to_present\\"
+run_to_pre = r"monique/run_to_present/"
+
 rule run_to_present:
-    input: baseline_calibration + r"01_serialize_transmission_sweep\\experiment_id.txt",
-            run_to_pre + r"params.py", run_to_pre + r"manifest.py"
+    input: baseline_calibration + r"01_serialize_transmission_sweep/experiment_id.txt",
+           run_to_pre + r"params.py",run_to_pre + r"manifest.py"
     output: touch(run_to_pre + r"experiment_id.txt")
     run:
         with open(input[0]) as exp_id_file:
             burnin_id = exp_id_file.read()
-        update_parameters_in_file(input[1], {"burnin_id = ": f"burnin_id = '{burnin_id}'\n",
-                                             "num_seeds = ": "num_seeds = 1\n",
-                                             "num_burnin_seeds = ": "num_burnin_seeds = 1\n",
-                                             "ser_date = 30 * 365": "ser_date = 10 * 365\n"})
-        update_parameters_in_file(input[2], {"USER_PATH = ": f"USER_PATH = r'..\data'\n",
-                                             "sif_id = None": "sif_id = 'dtk_sif.id'\n"})
-        shell(get_command(script= run_to_pre + r"run_simulations.py",
-                          python_version=config['python_version']))
+        update_parameters_in_file(input[1],{"burnin_id = ": f"burnin_id = '{burnin_id}'\n",
+                                            "num_seeds = ": "num_seeds = 1\n",
+                                            "num_burnin_seeds = ": "num_burnin_seeds = 1\n",
+                                            "ser_date = 30 * 365": "ser_date = 10 * 365\n",
+                                            "population_size =": "population_size = 2000\n"})
+        update_parameters_in_file(input[2],{"USER_PATH = ": f"USER_PATH = r'../data'\n",
+                                            "sif_id = None": "sif_id = 'dtk_sif.id'\n"})
+        shell(get_command(script=run_to_pre + r"run_simulations.py",
+            python_version=config['python_version']))
+
 #
 # run to future
-run_to_futu = r"monique\\run_future_scenarios\\"
+run_to_futu = r"monique/run_future_scenarios/"
+
 rule run_to_future:
     input: run_to_pre + r"experiment_id.txt",
-            run_to_futu + r"params.py", run_to_futu + r"manifest.py"
+           run_to_futu + r"params.py",run_to_futu + r"manifest.py"
     output: touch(run_to_futu + r"experiment_id.txt")
-    default_target: True
     run:
         with open(input[0]) as exp_id_file:
             burnin_id = exp_id_file.read()
-        update_parameters_in_file(input[1], {"burnin_id = ": f"burnin_id = '{burnin_id}'\n",
-                                             "num_seeds = ": "num_seeds = 1\n",
-                                             "num_burnin_seeds = ": "num_burnin_seeds = 1\n",
-                                             "num_burnin_seeds_calib = 5" : "num_burnin_seeds_calib = 1"})
-        update_parameters_in_file(input[2], {"USER_PATH = ": f"USER_PATH = r'..\data'\n",
-                                             "sif_id = None": "sif_id = 'dtk_sif.id'\n"})
-        shell(get_command(script= run_to_futu + r"run_simulations.py",
-                          python_version=config['python_version']))
+        update_parameters_in_file(input[1],{"burnin_id = ": f"burnin_id = '{burnin_id}'\n",
+                                            "num_seeds = ": "num_seeds = 1\n",
+                                            "num_burnin_seeds = ": "num_burnin_seeds = 1\n",
+                                            "num_burnin_seeds_calib = 5": "num_burnin_seeds_calib = 1\n",
+                                            "population_size =": "population_size = 2000\n"})
+        update_parameters_in_file(input[2],{"USER_PATH = ": f"USER_PATH = r'../data'\n",
+                                            "sif_id = None": "sif_id = 'dtk_sif.id'\n"})
+        shell(get_command(script=run_to_futu + r"run_simulations.py",
+            python_version=config['python_version']))
 
 # run 1960 to 2004
-run_1960_to_2004 = r"ben\\example\\run_1960-2004\\"
+run_1960_to_2004 = r"ben/example/run_1960-2004/"
 rule run_1960_2004:
-    input: run_1960_to_2004 + r"params.py", run_1960_to_2004 + r"manifest.py"
+    input: run_1960_to_2004 + r"params.py",run_1960_to_2004 + r"manifest.py"
     output: touch(run_1960_to_2004 + r"experiment_id.txt")
-    default_target: True
     run:
-        update_parameters_in_file(input[0], {"num_seeds = ": "num_seeds = 1 \n",
-                                             "iopath = ": "iopath = 'ben/IO' \n",
-                                             "years = ": "years = 5 \n"})
-        update_parameters_in_file(input[1], {"USER_PATH = ": f"USER_PATH = r'..\data'\n",
-                                             "sif_path = ": "sif_path = 'dtk_sif.id'\n"})
-        shell(get_command(script= run_1960_to_2004 + r"run_simulations.py",
-                          python_version=config['python_version']))
+        update_parameters_in_file(input[0],{"num_seeds = ": "num_seeds = 1 \n",
+                                            "iopath = ": "iopath = 'ben/IO' \n",
+                                            "years = ": "years = 5 \n"})
+        update_parameters_in_file(input[1],{"USER_PATH = ": f"USER_PATH = r'../data'\n",
+                                            "sif_path = ": "sif_path = 'dtk_sif.id'\n"})
+        shell(get_command(script=run_1960_to_2004 + r"run_simulations.py",
+            python_version=config['python_version']))
 
-run_2005_to_2022 = r"ben\\example\\run_2005-2022\\"
+run_2005_to_2022 = r"ben/example/run_2005-2022/"
+
 rule run_2005_2022:
     input: run_1960_to_2004 + r"experiment_id.txt",
-            run_2005_to_2022 + r"params.py", run_2005_to_2022 + r"manifest.py"
+           run_2005_to_2022 + r"params.py",
+           run_2005_to_2022 + r"manifest.py"
     output: touch(run_2005_to_2022 + r"experiment_id.txt")
-    default_target: True
     run:
         with open(input[0]) as exp_id_file:
             burnin_id = exp_id_file.read()
-        update_parameters_in_file(input[1], {"burnin_id = ": f"burnin_id = '{burnin_id}'\n",
-                                             "iopath = ": "iopath = 'ben/IO' \n"})
-        update_parameters_in_file(input[2], {"BEN_DIR = ": f"BEN_DIR = r'ben'\n",
-                                             "sif_path = ": "sif_path = 'dtk_sif.id'\n"})
-        shell(get_command(script= run_2005_to_2022 + r"run_simulations.py",
-                          python_version=config['python_version']))
+        update_parameters_in_file(input[1],{"burnin_id = ": f"burnin_id = '{burnin_id}'\n",
+                                            "iopath = ": "iopath = 'ben/IO' \n",
+                                            "ser_date =": "ser_date = 5 * 365\n"})
+        update_parameters_in_file(input[2],{"BEN_DIR = ": f"BEN_DIR = r'ben'\n",
+                                            "sif_path = ": "sif_path = 'dtk_sif.id'\n"})
+        shell(get_command(script=run_2005_to_2022 + r"run_simulations.py",
+            python_version=config['python_version']))
 
-
-
-rule all:
-    input: r"monique\\calibration\\baseline_calibration\\02_run_transmission_sweep\\experiment_id.txt"
-
-rule clean_output:
-    run:
-        os.remove(r"experiment_id.txt")
-        # os.remove(r"monique\\calibration\\baseline_calibration\\02_run_transmission_sweep\\experiment_id.txt")
+onsuccess:
+    delete_outputs(expected_outputs)
+onerror:
+    delete_outputs(expected_outputs)

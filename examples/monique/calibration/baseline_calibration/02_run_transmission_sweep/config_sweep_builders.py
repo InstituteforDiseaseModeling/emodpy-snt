@@ -114,6 +114,7 @@ def get_sweep_builders(**kwargs):
         lhdf['archetype'].values  # make sure this matches the values from serialize_transmission_sweep
     }
 
+    ser_df.to_csv("ser_df.csv")
     funcs_list = [[CfgFn(set_up_hfca, manifest=manifest,
                          hfca=my_admin,
                          archetype_hfca=df.at[my_admin, 'seasonality_archetype'],

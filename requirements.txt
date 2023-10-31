@@ -1,5 +1,6 @@
 -i https://packages.idmod.org/api/pypi/pypi-production/simple
-emodpy-malaria~=3.1.1
+emodpy-malaria
+requests==2.29.0
 idmtools_calibra~=1.0.9
 idmtools-platform-comps~=1.7.7
 scipy

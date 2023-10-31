@@ -39,8 +39,10 @@ def _post_run(experiment: Experiment, **kwargs):
     Return:
         None
     """
-    with open("monique\\run_to_present\\experiment_id.txt", "w") as fd:
-        fd.write(experiment.uid.hex)
+    wait_until_done = kwargs.get('wait_until_done', None)
+    if wait_until_done and experiment.succeeded:
+        with open("monique/run_to_present/experiment_id.txt", "w") as fd:
+            fd.write(experiment.uid.hex)
     pass
 
 
@@ -104,4 +106,4 @@ if __name__ == "__main__":
     # dtk.setup(pathlib.Path(manifest.eradication_path).parent)
     # os.chdir(os.path.dirname(__file__))
     # print("...done.")
-    run_experiment(show_warnings_once=True)
+    run_experiment(show_warnings_once=True, wait_until_done=True)

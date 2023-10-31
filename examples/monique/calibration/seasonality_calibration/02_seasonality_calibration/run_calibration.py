@@ -158,6 +158,23 @@ def get_manager(**kwargs):
     return calib_manager
 
 
+def _post_run(suite_id, **kwargs):
+    """
+    Add extra work after run calibration.
+    Args:
+        suite_id:
+        kwargs: additional parameters
+    Return:
+        None
+    """
+    from idmtools.core import ItemType
+    suite = platform.get_item(suite_id, ItemType.SUITE)
+
+    if all([exp.succeeded for exp in suite.experiments]):
+        with open("monique/calibration/seasonality_calibration/02_seasonality_calibration/experiment_id.txt", "w") as fd:
+            fd.write("Calibration good.")
+
+
 def run_calibration(directory: str = '.', **kwargs):
     """
     Get configured calibration and run.
@@ -176,6 +193,7 @@ def run_calibration(directory: str = '.', **kwargs):
     calib_manager = get_manager(**kwargs)
     _pre_run(**kwargs)
     calib_manager.run_calibration(**kwargs)
+    _post_run(calib_manager.suite_id, **kwargs)
 
 
 if __name__ == "__main__":

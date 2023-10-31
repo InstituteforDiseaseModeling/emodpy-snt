@@ -7,12 +7,12 @@ def update_parameters_in_file(filepath, parameters: dict = None):
         Helper function that updates file parameters to run examples in snakemake
     Args:
         filepath:
-        parameters: a dictionary formatted as: {"what to find in line": "what to replace the line with"}
+        parameters: a dictionary formatted as: {"what to find in line": "what to replace the entire line with"}
 
     Returns:
 
     """
-    temp = "temp.ptxt"
+    temp = "temp.txt"
     with open(temp, 'w') as new_file:
         with open(filepath) as old_file:
             for line in old_file:

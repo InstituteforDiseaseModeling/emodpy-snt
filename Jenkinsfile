@@ -1,5 +1,5 @@
 podTemplate(
-    //idleMinutes : 30,
+    idleMinutes : 30,
     podRetention : onFailure(),
     activeDeadlineSeconds : 3600,
     containers: [
@@ -59,8 +59,8 @@ podTemplate(
 				def wheelFile = sh(returnStdout: true, script: "find ./dist -name '*.whl'").toString().trim()
 				//def wheelFile = sh(returnStdout: true, script: "python3 ./.github/scripts/get_wheel_filename.py --package-file package_setup.py").toString().trim()
 				echo "This is the package file: ${wheelFile}"
-				sh "pip3 install $wheelFile --index-url=https://packages.idmod.org/api/pypi/pypi-production/simple"
-				 
+				//sh "pip3 install $wheelFile --index-url=https://packages.idmod.org/api/pypi/pypi-production/simple"
+				sh "pip3 install $wheelFile --index-url=https://stitova@idmod.org:tWIoY8i6DuYX!tWp@packages.idmod.org/api/pypi/pypi-staging/simple --pre"
 				//sh "pip3 install dataclasses"
 				sh 'pip3 install keyrings.alt'
 				sh "pip3 freeze"
@@ -108,7 +108,7 @@ podTemplate(
 			echo "Running examples"
 				dir('examples') {
 					sh 'pip3 install snakemake'
-					sh 'snakemake --cores=10 --config python_version=python3'
+					sh 'snakemake --cores=1 --config python_version=python3'
 				}
 			}
 

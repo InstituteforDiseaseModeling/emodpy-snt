@@ -118,7 +118,6 @@ def get_sweep_builders(**kwargs):
                                     f'monthly_habitats_1_{params.population_size}.csv'))
 
     sweepspace = {
-        # rep_admin: np.logspace(-1.6, 2, 25) for rep_admin in lhdf['archetype'].values
         rep_admin: [np.logspace(-1.6, 2, 25)[ii] for ii in [0, 4, 8, 12, 16, 20]] for rep_admin in
         lhdf['archetype'].values  # make sure this matches the values used in the next step
     }
