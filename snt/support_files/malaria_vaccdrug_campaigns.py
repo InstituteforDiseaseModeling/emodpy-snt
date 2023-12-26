@@ -179,19 +179,42 @@ def add_vaccdrug_campaign(campaign, campaign_type: str = 'SMC', start_days: list
     else:
         raise ValueError('Invalid campaign_type specified, valid options: "SMC" or "PMC"')
 
+def make_vehicle_drug(config, decay_time, Cmax, C50, irbc_killing, hep_killing=0.0):
 
-def make_vehicle_drug(campaign, drug_box_day: float = 0, drug_irbc_killing: float = 0, drug_hep_killing: float = 0):
-    if drug_box_day:
-        set_drug_param(campaign, "Vehicle", "Drug_Decay_T1", drug_box_day)
-        set_drug_param(campaign, "Vehicle", "Drug_Decay_T2", drug_box_day)
-    if drug_irbc_killing:
-        set_drug_param(campaign, "Vehicle", "Max_Drug_IRBC_Kill", drug_irbc_killing)
-    if drug_hep_killing:
-        set_drug_param(campaign, "Vehicle", "Drug_Hepatocyte_Killrate", drug_hep_killing)
+    if not (decay_time == 0):
+        set_drug_param(config, "Vehicle", "Drug_Decay_T1", decay_time)
+        set_drug_param(config, "Vehicle", "Drug_Decay_T2", decay_time)
 
-    return {'drug_box_day': drug_box_day,
-            'drug_irbc_killing': drug_irbc_killing,
-            'drug_hep_killing': drug_hep_killing}
+    if not (Cmax == 0):
+        set_drug_param(config, "Vehicle", "Drug_Cmax", Cmax)
+
+    if not (C50 == 0):
+        set_drug_param(config, "Vehicle", "Drug_PKPD_C50", C50)
+
+    if not (irbc_killing == 0):
+        set_drug_param(config, "Vehicle", "Max_Drug_IRBC_Kill", irbc_killing)
+
+    if not (hep_killing == 0):
+        set_drug_param(config, "Vehicle", "Drug_Hepatocyte_Killrate", hep_killing)
+
+    return {'drug_decay_time': decay_time,
+            'drug_cmax': Cmax,
+            'drug_c50': C50,
+            'drug_irbc_killing': irbc_killing,
+            'drug_hep_killing': hep_killing}
+
+#def make_vehicle_drug(campaign, drug_box_day: float = 0, drug_irbc_killing: float = 0, drug_hep_killing: float = 0):
+#    if drug_box_day:
+#        set_drug_param(campaign, "Vehicle", "Drug_Decay_T1", drug_box_day)
+#        set_drug_param(campaign, "Vehicle", "Drug_Decay_T2", drug_box_day)
+#    if drug_irbc_killing:
+#        set_drug_param(campaign, "Vehicle", "Max_Drug_IRBC_Kill", drug_irbc_killing)
+#    if drug_hep_killing:
+#        set_drug_param(campaign, "Vehicle", "Drug_Hepatocyte_Killrate", drug_hep_killing)
+#
+#    return {'drug_box_day': drug_box_day,
+#            'drug_irbc_killing': drug_irbc_killing,
+#            'drug_hep_killing': drug_hep_killing}
 
 
 def add_vaccdrug_smc(campaign, start_days: list, coverages: list,
@@ -286,11 +309,17 @@ def add_vaccdrug_smc(campaign, start_days: list, coverages: list,
     vaccine_box_duration = vaccine_param_dict['vacc_box_duration']
     vaccine_decay_duration = vaccine_param_dict['vacc_decay_duration']
 
-    drug_box_day = drug_param_dict['drug_box_day']
-    drug_irbc_killing = drug_param_dict['drug_irbc_killing']
-    drug_hep_killing = drug_param_dict['drug_hep_killing']
-    make_vehicle_drug(campaign, drug_box_day=drug_box_day, drug_irbc_killing=drug_irbc_killing,
-                      drug_hep_killing=drug_hep_killing)
+    #drug_decay_time = drug_param_dict['drug_decay_time']
+    #drug_Cmax = drug_param_dict['drug_Cmax']
+    #drug_C50 = drug_param_dict['drug_C50']
+    #drug_irbc_killing = drug_param_dict['drug_irbc_killing']
+    #drug_hep_killing = drug_param_dict['drug_hep_killing']
+    #make_vehicle_drug(campaign, 
+    #                  decay_time=drug_decay_time,
+    #                  Cmax=drug_Cmax,
+    #                  C50=drug_C50,
+    #                  maxeff=drug_irbc_killing,
+    #                  hep=drug_hep_killing)
 
     for (d, cov) in zip(start_days, coverages):
         add_drug_campaign(campaign, campaign_type='MDA',
