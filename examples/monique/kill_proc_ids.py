@@ -14,9 +14,9 @@ with open(PID_FILE) as f:
 for pid in pids:
     try:
         if platform.system() == "Windows":
-            os.system(f"taskkill /PID {pid} /F >nul 2>&1")
-        else:
             os.kill(int(pid), signal.SIGTERM)
+        else:
+            os.kill(int(pid), signal.SIGKILL)
         print(f"Killed PID {pid}")
     except Exception as e:
         print(f"Failed to kill PID {pid}: {e}")
