@@ -1,5 +1,6 @@
 import os
 import signal
+import platform
 
 PID_FILE = "pid_list.txt"
 
@@ -12,13 +13,13 @@ with open(PID_FILE) as f:
 
 for pid in pids:
     try:
-        # On Windows, SIGTERM translates to a termination signal.
-        os.kill(pid, signal.SIGTERM)
+        if platform.system() == "Windows":
+            os.system(f"taskkill /PID {pid} /F >nul 2>&1")
+        else:
+            os.kill(int(pid), signal.SIGTERM)
         print(f"Killed PID {pid}")
-    except ProcessLookupError:
-        print(f"PID {pid} not found (already exited).")
-    except PermissionError:
-        print(f"No permission to kill PID {pid}.")
+    except Exception as e:
+        print(f"Failed to kill PID {pid}: {e}")
 
 os.remove(PID_FILE)
 print(f"Removed {PID_FILE}")
