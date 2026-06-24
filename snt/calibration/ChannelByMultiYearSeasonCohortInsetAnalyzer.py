@@ -22,7 +22,7 @@ class ChannelByMultiYearSeasonCohortInsetAnalyzer(BaseCalibrationAnalyzer):
         else:
             return datetime.datetime.strptime(str(x), '%j').month
 
-    def __init__(self, site, weight=1, compare_fn=ll_calculators.gamma_poisson_pandas, **kwargs):
+    def __init__(self, site, weight=1, compare_fn=ll_calculators.negative_square_diff_obs_sim, **kwargs):
         super().__init__(reference_data=site.get_reference_data('entomology_by_season'),
                          weight=weight,
                          filenames=['output/ReportEventCounter.json',
@@ -49,8 +49,6 @@ class ChannelByMultiYearSeasonCohortInsetAnalyzer(BaseCalibrationAnalyzer):
 
         simdata = pd.DataFrame(simdata)
         simdata[self.comparison_channel] = simdata[self.case_channel] + simdata[self.nmf_channel]
-        # inflate pop for undercounted denom
-        # simdata[self.population_channel] = simdata[self.population_channel]  # *1.2
 
         simdata = simdata[-365:].reset_index(drop=True)
         simdata['Time'] = simdata.index
@@ -60,10 +58,14 @@ class ChannelByMultiYearSeasonCohortInsetAnalyzer(BaseCalibrationAnalyzer):
         simdata = simdata.rename(columns={self.population_channel: 'Trials',
                                           self.comparison_channel: 'Observations'})
 
-        s1 = simdata.groupby('Month')['Trials'].agg(np.mean).reset_index()
-        s2 = simdata.groupby('Month')['Observations'].agg(np.sum).reset_index()
+        s1 = simdata.groupby('Month')['Trials'].agg('mean').reset_index()
+        s2 = simdata.groupby('Month')['Observations'].agg('sum').reset_index()
         simdata = pd.merge(left=s1, right=s2, on='Month')
         simdata = simdata[['Month', 'Trials', 'Observations']]
+
+        # add in the simulation id for debugging
+        # simdata['sim_id'] = simulation.id.hex
+
         simdata = simdata.set_index(['Month'])
 
         return simdata
@@ -95,6 +97,9 @@ class ChannelByMultiYearSeasonCohortInsetAnalyzer(BaseCalibrationAnalyzer):
 
         data = combined.groupby(level=['sample', 'Counts'], axis=1).mean()
         compare_results = data.groupby(level='sample', axis=1).apply(self.compare)
+        # Make sure index is sorted in correct order
+        compare_results.index = compare_results.index.astype(int)
+        compare_results = compare_results.sort_index(ascending=True)
 
         head, tail = os.path.split(self.working_dir)
         iteration = int(tail.split('r')[-1])
@@ -115,7 +120,7 @@ class ChannelByMultiYearSeasonCohortInsetAnalyzer(BaseCalibrationAnalyzer):
                 ax.plot(plot_df['Month'], plot_df['incidence'], '-', color='r', linewidth=0.5, alpha=0.3)
 
             adf = pd.concat([selected[i].reset_index() for i in selected_index])
-            plot_df = adf.groupby('Month').agg(np.mean).reset_index()
+            plot_df = adf.groupby('Month').agg('mean').reset_index()
             plot_df['incidence'] = plot_df['Observations'] / plot_df['Trials'] * 1000
             ax.plot(plot_df['Month'], plot_df['incidence'], '-o', color='r', label=f'iter {iteration} sample {sample}')
             ax.plot(ref['Month'], ref['incidence'],
@@ -129,3 +134,8 @@ class ChannelByMultiYearSeasonCohortInsetAnalyzer(BaseCalibrationAnalyzer):
             plt.close(fig)
 
         return compare_results
+
+
+
+
+

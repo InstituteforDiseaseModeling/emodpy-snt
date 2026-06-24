@@ -1,6 +1,7 @@
 # create_sim_input_cm.R
 
 library(reshape2)
+library(dplyr)
 
 
 ###############################
@@ -29,7 +30,7 @@ library(reshape2)
 # maximum_coverage = 0.9
 # sim_start_year = 2010
 
-create_cm_input_from_DHS = function(hbhi_dir, cm_variable_name='cm', sim_start_year=2010, adult_multiplier=0.5, severe_multiplier=2, severe_minimum=0.6, maximum_coverage=0.9){
+create_cm_input_from_DHS = function(hbhi_dir, cm_variable_name='cm', sim_start_year=2010, adult_multiplier=0.5, severe_multiplier=2, severe_minimum=0.6, maximum_coverage=0.9, act_adherence_effective_multiplier=1, cm_suffix=''){
   # read in coverages for U5
   sample_df = read.csv(paste0(hbhi_dir, '/estimates_from_DHS/DHS_sampled_params_',cm_variable_name,'.csv'))[,-1]
   # convert from wide to long format to make each seed its own row
@@ -41,18 +42,26 @@ create_cm_input_from_DHS = function(hbhi_dir, cm_variable_name='cm', sim_start_y
   if(length(unique(coverage_df$seed))<=1){
     coverage_df = coverage_df[,-which(colnames(coverage_df)=='seed')]
   }
-
+  
   # add in coverage for adults
   coverage_df$adult_coverage = sapply((coverage_df$U5_coverage * adult_multiplier), min, maximum_coverage)
   # add severe disease coverage
   coverage_df$severe_coverage = sapply(sapply((coverage_df$U5_coverage * severe_multiplier), min, maximum_coverage), max, severe_minimum)
   
+  # decrease the effective coverage to account for imperfect adherence to the full ACT regimine
+  coverage_df$adult_coverage = coverage_df$adult_coverage * act_adherence_effective_multiplier
+  coverage_df$U5_coverage = coverage_df$U5_coverage * act_adherence_effective_multiplier
+  
   # add in the day of the simulation each intervention should start and the duration
   coverage_df$simday = (coverage_df$year - sim_start_year) * 365
   coverage_df$duration = 365  # duration in days
-  
+
+  # re-order rows for easier review
+  coverage_df = coverage_df %>%
+    arrange(admin_name, year)
+
   if(!dir.exists(paste0(hbhi_dir, '/simulation_inputs/interventions_2010_toPresent'))) dir.create(paste0(hbhi_dir, '/simulation_inputs/interventions_2010_toPresent'))
-  write.csv(coverage_df, paste0(hbhi_dir, '/simulation_inputs/interventions_2010_toPresent/cm_2010_toPresent.csv'))
+  write.csv(coverage_df, paste0(hbhi_dir, '/simulation_inputs/interventions_2010_toPresent/cm_2010', cm_suffix,'_toPresent.csv'), row.names=FALSE)
 }
 
 
@@ -60,9 +69,9 @@ create_season_calib_cm_input_from_DHS = function(hbhi_dir, cm_variable_name='cm'
   # use the coverage observed in the dhs_year_cm_burnin DHS survey for all burnin years and the coverage observed in dhs_year_cm_calib for all main calib years
   # read in coverages for U5
   season_arch_rates = read.csv(paste0(hbhi_dir, '/estimates_from_DHS/DHS_archetype_rates.csv'))
-  season_arch_rates = season_arch_rates[,which(colnames(season_arch_rates) %in% c('archetype','year', paste0(cm_variable_name,'_rate')))]
+  season_arch_rates = season_arch_rates[,which(colnames(season_arch_rates) %in% c('seasonality_archetype','year', paste0(cm_variable_name,'_rate')))]
   colnames(season_arch_rates)[colnames(season_arch_rates)==paste0(cm_variable_name,'_rate')] = 'U5_coverage'
-  colnames(season_arch_rates)[colnames(season_arch_rates)=='archetype'] = 'admin_name'
+  colnames(season_arch_rates)[colnames(season_arch_rates)=='seasonality_archetype'] = 'admin_name'
   
   
   # add in coverage for adults
@@ -75,7 +84,7 @@ create_season_calib_cm_input_from_DHS = function(hbhi_dir, cm_variable_name='cm'
   season_arch_rates$simday = 0
   season_arch_rates$duration = -1
   
-# extract U5 coverage for burnin and for main calibration
+  # extract U5 coverage for burnin and for main calibration
   burnin_coverage = season_arch_rates[season_arch_rates$year == dhs_year_cm_burnin,]
   calib_coverage = season_arch_rates[season_arch_rates$year == dhs_year_cm_calib,]
   
@@ -138,7 +147,7 @@ create_iptp_input_from_DHS = function(hbhi_dir, iptp_variable_name='iptp', sim_s
   # convert from wide to long format to make each seed its own row
   coverage_df = reshape2::melt(sample_df, id.vars=c("admin_name", "year"))
   colnames(coverage_df)[colnames(coverage_df)=='variable'] = 'seed'
-  colnames(coverage_df)[colnames(coverage_df)=='value'] = 'IPTp_coverage'
+  colnames(coverage_df)[colnames(coverage_df)=='value'] = 'coverage'
   # replace "sample_" with "" in the seed column
   coverage_df$seed = gsub('sample_','',coverage_df$seed)
   if(length(unique(coverage_df$seed))<=1){

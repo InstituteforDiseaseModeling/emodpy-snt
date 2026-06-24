@@ -40,9 +40,10 @@ def _post_run(experiment: Experiment, **kwargs):
     Return:
         None
     """
-    # Save experiment id to file to be used by snakefile
-    with open("monique\\calibration\\baseline_calibration\\01_serialize_transmission_sweep\\experiment_id.txt", "w") as fd:
-        fd.write(experiment.uid.hex)
+    if experiment.succeeded:
+        # Save experiment id to file to be used by snakefile
+        with open("monique\\calibration\\baseline_calibration\\01_serialize_transmission_sweep\\experiment_id.txt", "w") as fd:
+            fd.write(experiment.uid.hex)
 
     pass
 
@@ -87,7 +88,7 @@ def run_experiment(**kwargs):
 
     experiment = _config_experiment(**kwargs)
     _pre_run(experiment, **kwargs)
-    experiment.run(wait_until_done=True, wait_on_done=False)
+    experiment.run(wait_until_done=True)
     _post_run(experiment, **kwargs)
 
 
@@ -97,10 +98,10 @@ if __name__ == "__main__":
     - show_warnings_once=False: show api warnings for all simulations
     - show_warnings_once=None:  not show api warnings
     """
-    platform = Platform('CALCULON', node_group='idm_48cores')
+    platform = Platform('CALCULON')#, node_group='emod_abcd')
     # platform = Platform('IDMCLOUD', node_group='emod_abcd')
 
-    # If you don't have Eradication, un-comment out the following to download Eradication
+    # # If you don't have Eradication, un-comment out the following to download Eradication
     # import emod_malaria.bootstrap as dtk
     # import pathlib
     # import os

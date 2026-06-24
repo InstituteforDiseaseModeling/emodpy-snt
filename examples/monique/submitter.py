@@ -4,8 +4,8 @@ from snt.load_paths import load_box_paths
 
 # Specify data location
 USER_PATH = None
-USER_PATH = r'C:\Projects\emodpy-snt\data'
-_, project_path = load_box_paths(user_path=USER_PATH, country_name='Burundi')
+# USER_PATH = r'C:\Projects\emodpy-snt'
+_, project_path = load_box_paths(user_path=USER_PATH, country_name='Example')
 
 wdir = os.path.join(project_path, 'simulation_inputs')
 future_projections = True

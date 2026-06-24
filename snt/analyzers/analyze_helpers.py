@@ -9,7 +9,7 @@ class monthlyU1PfPRAnalyzer(IAnalyzer):
 
     def __init__(self, expt_name, sweep_variables=None, working_dir=".", start_year=2020, end_year=2026):
         super(monthlyU1PfPRAnalyzer, self).__init__(working_dir=working_dir,
-                                                    filenames=["output/MalariaSummaryReport_Monthly_U1U5_%d.json" % x
+                                                    filenames=["output/MalariaSummaryReport_Monthly_%d.json" % x
                                                                for x in range(start_year, end_year)]
                                                     )
         self.sweep_variables = sweep_variables or ["Run_Number"]
@@ -52,8 +52,8 @@ class monthlyU1PfPRAnalyzer(IAnalyzer):
             print("No data have been returned... Exiting...")
             return
 
-        if not os.path.exists(os.path.join(self.working_dir, self.expt_name)):
-            os.mkdir(os.path.join(self.working_dir, self.expt_name))
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
 
         adf = pd.concat(selected).reset_index(drop=True)
         adf.to_csv((os.path.join(self.working_dir, self.expt_name, 'U1_PfPR_ClinicalIncidence.csv')), index=False)
@@ -71,8 +71,8 @@ class monthlyU5PfPRAnalyzer(IAnalyzer):
         self.start_year = start_year
         self.end_year = end_year
 
-    def filter(self, simulation):
-        return simulation.status.name == 'Succeeded'
+    # def filter(self, simulation):
+    #     return simulation.status.name == 'Succeeded'
 
     def map(self, data, simulation):
 
@@ -106,8 +106,8 @@ class monthlyU5PfPRAnalyzer(IAnalyzer):
             print("No data have been returned... Exiting...")
             return
 
-        if not os.path.exists(os.path.join(self.working_dir, self.expt_name)):
-            os.mkdir(os.path.join(self.working_dir, self.expt_name))
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
 
         adf = pd.concat(selected).reset_index(drop=True)
         adf.to_csv((os.path.join(self.working_dir, self.expt_name, 'U5_PfPR_ClinicalIncidence.csv')), index=False)
@@ -174,8 +174,8 @@ class MonthlyPfPRAnalyzerByAge(IAnalyzer):
             print("No data have been returned... Exiting...")
             return
 
-        if not os.path.exists(os.path.join(self.working_dir, self.expt_name)):
-            os.mkdir(os.path.join(self.working_dir, self.expt_name))
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
 
         adf = pd.concat(selected).reset_index(drop=True)
         adf.to_csv((os.path.join(self.working_dir, self.expt_name, 'Agebins_PfPR_ClinicalIncidenceAnemia.csv')),
@@ -198,7 +198,7 @@ class monthlyTreatedCasesAnalyzer(IAnalyzer):
                                                           )
         self.sweep_variables = sweep_variables or ["admin_name", "Run_Number"]
         if channels is None:
-            self.channels = ['Received_Treatment', 'Received_Severe_Treatment', 'Received_NMF_Treatment']
+            self.channels = ['Received_Treatment', 'Received_Severe_Treatment', 'Received_NMF_Treatment', 'Received_Vaccine']
         else:
             self.channels = channels
         self.inset_channels = ['Statistical Population', 'New Clinical Cases', 'New Severe Cases', 'PfHRP2 Prevalence']
@@ -212,16 +212,20 @@ class monthlyTreatedCasesAnalyzer(IAnalyzer):
 
     def map(self, data, simulation):
 
-        simdata = pd.DataFrame({x: data[self.filenames[0]]['Channels'][x]['Data'] for x in self.channels})
+        channels_in_expt = [x for x in self.channels if x in data[self.filenames[0]]['Channels'].keys()]
+        simdata = pd.DataFrame({x: data[self.filenames[0]]['Channels'][x]['Data'] for x in channels_in_expt})
         simdata['Time'] = simdata.index
 
         d = pd.DataFrame({x: data[self.filenames[1]]['Channels'][x]['Data'] for x in self.inset_channels})
         d['Time'] = d.index
 
-        if len(self.channels) > 0:
+        if len(channels_in_expt) > 0:
             simdata = pd.merge(left=simdata, right=d, on='Time')
         else:
             simdata = d
+        for missing_channel in [x for x in self.channels if x not in channels_in_expt]:
+            simdata[missing_channel] = 0
+
         simdata['Day'] = simdata['Time'] % 365
         simdata['month'] = simdata['Day'].apply(lambda x: self.monthparser((x + 1) % 365))
         simdata['year'] = simdata['Time'].apply(lambda x: int(x / 365) + self.start_year)
@@ -251,6 +255,8 @@ class monthlyTreatedCasesAnalyzer(IAnalyzer):
         pdf = adf.groupby(['admin_name', 'date', 'Run_Number'])[mean_channels].agg(np.mean).reset_index()
 
         adf = pd.merge(left=pdf, right=df, on=['admin_name', 'date', 'Run_Number'])
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
         adf.to_csv(os.path.join(self.working_dir, self.expt_name, 'All_Age_monthly_Cases.csv'), index=False)
 
 
@@ -298,8 +304,8 @@ class monthlyPrevalenceAnalyzer(IAnalyzer):
             print("No data have been returned... Exiting...")
             return
 
-        if not os.path.exists(os.path.join(self.working_dir, self.expt_name)):
-            os.mkdir(os.path.join(self.working_dir, self.expt_name))
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
 
         adf = pd.concat(selected).reset_index(drop=True)
         adf['date'] = adf.apply(lambda x: datetime.date(x['year'], x['month'], 1), axis=1)
@@ -315,6 +321,72 @@ class monthlyPrevalenceAnalyzer(IAnalyzer):
         adf.to_csv(os.path.join(self.working_dir, self.expt_name, 'All_Age_monthly_prevalence.csv'), index=False)
 
 
+class monthlyEventAnalyzerITN(IAnalyzer):
+
+    @classmethod
+    def monthparser(self, x):
+        if x == 0:
+            return 12
+        else:
+            return datetime.datetime.strptime(str(x), '%j').month
+
+    def __init__(self, expt_name, channels=None, sweep_variables=None, working_dir=".", start_year=2020, end_year=2026, output_file_suffix=''):
+        super(monthlyEventAnalyzerITN, self).__init__(working_dir=working_dir,
+                                                   filenames=["output/ReportEventCounter.json"]
+                                                   )
+        self.sweep_variables = sweep_variables or ["admin_name", "Run_Number"]
+        if channels is None:
+            self.channels = ['Received_Treatment', 'Received_Severe_Treatment', 'Received_NMF_Treatment',  # 'Received_Self_Medication',
+                             'Bednet_Using', # 'Bednet_Got_New_One',
+                             # currently removed 'Bednet_Got_New_One', since length is 1 longer than expected for unknown reasons
+                             'Received_Campaign_Drugs', 'Received_IRS', 'Received_Vaccine', 'Received_PMC_VaccDrug']
+        else:
+            self.channels = channels
+        self.expt_name = expt_name
+        self.start_year = start_year
+        self.end_year = end_year
+        self.output_file_suffix = output_file_suffix
+
+    # def filter(self, simulation):
+    #     return simulation.status.name == 'Succeeded'
+
+    def map(self, data, simulation):
+
+        channels_in_expt = [x for x in self.channels if x in data[self.filenames[0]]['Channels'].keys()]
+
+        simdata = pd.DataFrame({x: data[self.filenames[0]]['Channels'][x]['Data'] for x in channels_in_expt})
+        simdata['Time'] = simdata.index + 1
+
+        simdata['Day'] = simdata['Time'] % 365
+        simdata['month'] = simdata['Day'].apply(lambda x: self.monthparser((x + 1) % 365))
+        simdata['year'] = simdata['Time'].apply(lambda x: int(x / 365) + self.start_year)
+
+        for missing_channel in [x for x in self.channels if x not in channels_in_expt]:
+            simdata[missing_channel] = 0
+
+        for sweep_var in self.sweep_variables:
+            if sweep_var in simulation.tags.keys():
+                simdata[sweep_var] = simulation.tags[sweep_var]
+        return simdata
+
+    def reduce(self, all_data):
+
+        selected = [data for sim, data in all_data.items()]
+        if len(selected) == 0:
+            print("No data have been returned... Exiting...")
+            return
+
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
+
+        adf = pd.concat(selected).reset_index(drop=True, )
+        adf['date'] = adf.apply(lambda x: datetime.date(x['year'], x['month'], 1), axis=1)
+
+        df = adf.groupby(['admin_name', 'date', 'Run_Number'])[self.channels].agg(np.sum).reset_index()
+        df.to_csv(os.path.join(self.working_dir, self.expt_name, 'monthly_Event_Count%s.csv' % self.output_file_suffix), index=False)
+
+
+
 class monthlyEventAnalyzer(IAnalyzer):
 
     @classmethod
@@ -324,14 +396,14 @@ class monthlyEventAnalyzer(IAnalyzer):
         else:
             return datetime.datetime.strptime(str(x), '%j').month
 
-    def __init__(self, expt_name, channels=None, sweep_variables=None, working_dir=".", start_year=2020, end_year=2026):
+    def __init__(self, expt_name, channels=None, sweep_variables=None, working_dir=".", start_year=2020, end_year=2026, output_file_suffix=''):
         super(monthlyEventAnalyzer, self).__init__(working_dir=working_dir,
                                                    filenames=["output/ReportEventCounter.json"]
                                                    )
         self.sweep_variables = sweep_variables or ["admin_name", "Run_Number"]
         if channels is None:
             self.channels = ['Received_Treatment', 'Received_Severe_Treatment', 'Received_NMF_Treatment',
-                             'Received_Self_Medication', 'Bednet_Using', 'Bednet_Got_New_One',
+                             'Bednet_Using', # 'Bednet_Got_New_One',  # 'Received_Self_Medication',
                              # currently removed 'Bednet_Got_New_One', since length is 1 longer than expected for unknown reasons
                              'Received_Campaign_Drugs', 'Received_IRS', 'Received_Vaccine', 'Received_PMC_VaccDrug']
         else:
@@ -339,9 +411,10 @@ class monthlyEventAnalyzer(IAnalyzer):
         self.expt_name = expt_name
         self.start_year = start_year
         self.end_year = end_year
+        self.output_file_suffix = output_file_suffix
 
-    def filter(self, simulation):
-        return simulation.status.name == 'Succeeded'
+    # def filter(self, simulation):
+    #     return simulation.status.name == 'Succeeded'
 
     def map(self, data, simulation):
 
@@ -369,14 +442,14 @@ class monthlyEventAnalyzer(IAnalyzer):
             print("No data have been returned... Exiting...")
             return
 
-        if not os.path.exists(os.path.join(self.working_dir, self.expt_name)):
-            os.mkdir(os.path.join(self.working_dir, self.expt_name))
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
 
         adf = pd.concat(selected).reset_index(drop=True, )
         adf['date'] = adf.apply(lambda x: datetime.date(x['year'], x['month'], 1), axis=1)
 
         df = adf.groupby(['admin_name', 'date', 'Run_Number'])[self.channels].agg(np.sum).reset_index()
-        df.to_csv(os.path.join(self.working_dir, self.expt_name, 'monthly_Event_Count.csv'), index=False)
+        df.to_csv(os.path.join(self.working_dir, self.expt_name, 'monthly_Event_Count%s.csv' % self.output_file_suffix), index=False)
 
 
 class monthlySevereTreatedByAgeAnalyzer(IAnalyzer):
@@ -411,11 +484,16 @@ class monthlySevereTreatedByAgeAnalyzer(IAnalyzer):
 
         simdata = pd.DataFrame()
         if len(output_data) > 0:  # there are events of this type
-            output_data['Day'] = output_data['Time'] % 365
-            output_data['month'] = output_data['Day'].apply(lambda x: self.monthparser((x + 1) % 365))
-            output_data['year'] = output_data['Time'].apply(lambda x: int(x / 365) + self.start_year)
-            output_data['age in years'] = output_data['Age'] / 365
+            # output_data['Day'] = output_data['Time'] % 365
+            # output_data['month'] = output_data['Day'].apply(lambda x: self.monthparser((x + 1) % 365))
+            # output_data['year'] = output_data['Time'].apply(lambda x: int(x / 365) + self.start_year)
+            # output_data['age in years'] = output_data['Age'] / 365
+            output_data = output_data.copy()  # ensure it's not a view
 
+            output_data.loc[:, 'Day'] = output_data['Time'] % 365
+            output_data.loc[:, 'month'] = output_data['Day'].apply(lambda x: self.monthparser((x + 1) % 365))
+            output_data.loc[:, 'year'] = output_data['Time'] // 365 + self.start_year
+            output_data.loc[:, 'age in years'] = output_data['Age'] / 365
             for agemax in self.agebins:
                 if agemax < 200:
                     agelabel = 'U%d' % agemax
@@ -451,8 +529,8 @@ class monthlySevereTreatedByAgeAnalyzer(IAnalyzer):
             print("No data have been returned... Exiting...")
             return
 
-        if not os.path.exists(os.path.join(self.working_dir, self.expt_name)):
-            os.mkdir(os.path.join(self.working_dir, self.expt_name))
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
 
         adf = pd.concat(selected).reset_index(drop=True)
         adf = adf.fillna(0)
@@ -540,8 +618,8 @@ class MonthlyNewInfectionsAnalyzer(IAnalyzer):
         self.end_year = end_year
         self.output_filename = output_filename
 
-    def filter(self, simulation):
-        return simulation.status.name == 'Succeeded'
+    # def filter(self, simulation):
+    #     return simulation.status.name == 'Succeeded'
 
     def map(self, data, simulation):
 
@@ -626,8 +704,8 @@ class MonthlyNewInfectionsAnalyzer(IAnalyzer):
             print("No data have been returned... Exiting...")
             return
 
-        if not os.path.exists(os.path.join(self.working_dir, self.expt_name)):
-            os.mkdir(os.path.join(self.working_dir, self.expt_name))
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
 
         adf = pd.concat(selected).reset_index(drop=True)
         adf.to_csv((os.path.join(self.working_dir, self.expt_name, self.output_filename)), index=False)
@@ -650,8 +728,8 @@ class MonthlyNewInfectionsAnalyzer_withU5(IAnalyzer):
         self.end_year = end_year
         self.output_filename = output_filename
 
-    def filter(self, simulation):
-        return simulation.status.name == 'Succeeded'
+    # def filter(self, simulation):
+    #     return simulation.status.name == 'Succeeded'
 
     def map(self, data, simulation):
 
@@ -754,8 +832,8 @@ class MonthlyNewInfectionsAnalyzer_withU5(IAnalyzer):
             print("No data have been returned... Exiting...")
             return
 
-        if not os.path.exists(os.path.join(self.working_dir, self.expt_name)):
-            os.mkdir(os.path.join(self.working_dir, self.expt_name))
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
 
         adf = pd.concat(selected).reset_index(drop=True)
         adf.to_csv((os.path.join(self.working_dir, self.expt_name, self.output_filename)), index=False)
@@ -777,8 +855,8 @@ class MonthlyNewInfectionsAnalyzerByAge(IAnalyzer):
         self.end_year = end_year
         self.output_filename = output_filename
 
-    def filter(self, simulation):
-        return simulation.status.name == 'Succeeded'
+    # def filter(self, simulation):
+    #     return simulation.status.name == 'Succeeded'
 
     def map(self, data, simulation):
 
@@ -845,8 +923,8 @@ class MonthlyNewInfectionsAnalyzerByAge(IAnalyzer):
             print("No data have been returned... Exiting...")
             return
 
-        if not os.path.exists(os.path.join(self.working_dir, self.expt_name)):
-            os.mkdir(os.path.join(self.working_dir, self.expt_name))
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
 
         adf = pd.concat(selected).reset_index(drop=True)
         adf.to_csv((os.path.join(self.working_dir, self.expt_name, self.output_filename)), index=False)
@@ -882,16 +960,20 @@ class monthlyUsageLLIN(IAnalyzer):
 
     def map(self, data, simulation):
 
-        simdata = pd.DataFrame({x: data[self.filenames[0]]['Channels'][x]['Data'] for x in self.channels})
+        channels_in_expt = [x for x in self.channels if x in data[self.filenames[0]]['Channels'].keys()]
+        simdata = pd.DataFrame({x: data[self.filenames[0]]['Channels'][x]['Data'] for x in channels_in_expt})
         simdata['Time'] = simdata.index
 
         d = pd.DataFrame({x: data[self.filenames[1]]['Channels'][x]['Data'] for x in self.inset_channels})
         d['Time'] = d.index
 
-        if len(self.channels) > 0:
+        if len(channels_in_expt) > 0:
             simdata = pd.merge(left=simdata, right=d, on='Time')
         else:
             simdata = d
+        for missing_channel in [x for x in self.channels if x not in channels_in_expt]:
+            simdata[missing_channel] = 0
+
         simdata['day_of_year'] = simdata['Time'] % 365
         simdata['month'] = simdata['day_of_year'].apply(lambda x: self.monthparser((x + 1) % 365))
         simdata['year'] = simdata['Time'].apply(lambda x: int(x / 365) + self.start_year)
@@ -908,8 +990,8 @@ class monthlyUsageLLIN(IAnalyzer):
             print("No data have been returned... Exiting...")
             return
 
-        if not os.path.exists(os.path.join(self.working_dir, self.expt_name)):
-            os.mkdir(os.path.join(self.working_dir, self.expt_name))
+        output_dir = os.path.join(self.working_dir, self.expt_name)
+        os.makedirs(output_dir, exist_ok=True)
 
         adf = pd.concat(selected).reset_index(drop=True)
         adf['date'] = adf.apply(lambda x: datetime.date(x['year'], x['month'], 1), axis=1)
@@ -927,194 +1009,94 @@ if __name__ == "__main__":
 
     platform = Platform('Calculon')
 
-    data_path, project_path = load_box_paths(country_name='Burundi')
+    data_path, project_path = load_box_paths(country_name='Nigeria')
 
-    working_dir = os.path.join(project_path, 'simulation_output', '2010_to_present')
+    working_dir = os.path.join(project_path, 'simulation_output', 'simulations_to_present')
     start_year = 2010  # simulation starts in January of this year
-    end_year = 2021  # simulation ends in December of this year
+    end_year = 2024  # simulation ends in December of this year
     # start_year = 2021  # simulation starts in January of this year
     # end_year = 2030  # simulation ends in December of this year
 
     expt_ids = {
-        'test_analyzers_from_toPresent_v3': '5c0726d3-4cf3-ed11-aa06-b88303911bc1'
+        'NGA25_toPresent_allInter': 'af6003bc-9778-f011-9f17-b88303912b51'
         # 'NGA_toPresent_allInter': '0a297502-088c-ed11-aa00-b88303911bc1',
     }
-    include_LLINp = False  # determines whether number of new infections among individuals with/without LLINps obtained
-    itn_comparison = False
 
-    if (not include_LLINp) and (not itn_comparison):
-        for expname, expid in expt_ids.items():
-            print('running expt %s' % expname)
-            report_count_channels = ['Received_Treatment', 'Received_Severe_Treatment', 'Received_NMF_Treatment',
-                                     'Received_Self_Medication', 'Bednet_Got_New_One', 'Bednet_Using',
-                                     'Received_Campaign_Drugs', 'Received_IRS'
-                                     ]
-            report_count_channels = None
+    for expname, expid in expt_ids.items():
+        print('running expt %s' % expname)
+        # report_count_channels = ['Received_Treatment', 'Received_Severe_Treatment', 'Received_NMF_Treatment',
+        #                           'Bednet_Got_New_One', 'Bednet_Using',  # 'Received_Self_Medication',
+        #                          'Received_Campaign_Drugs', 'Received_IRS'
+        #                          ]
+        report_count_channels = None
 
-            if 'no_IRS_SMC_ITN_CM' in expname:
-                cur_monthlyTreatedCasesAnalyzer = monthlyTreatedCasesAnalyzer(expt_name=expname,
-                                                                              channels=['Received_NMF_Treatment'],
-                                                                              sweep_variables=["Run_Number",
-                                                                                               "admin_name"],
-                                                                              working_dir=working_dir,
-                                                                              start_year=start_year,
-                                                                              end_year=end_year)
-            else:
-                cur_monthlyTreatedCasesAnalyzer = monthlyTreatedCasesAnalyzer(expt_name=expname,
-                                                                              channels=report_count_channels,
-                                                                              sweep_variables=["Run_Number",
-                                                                                               "admin_name"],
-                                                                              working_dir=working_dir,
-                                                                              start_year=start_year,
-                                                                              end_year=end_year)
+        if 'no_IRS_SMC_ITN_CM' in expname:
+            cur_monthlyTreatedCasesAnalyzer = monthlyTreatedCasesAnalyzer(expt_name=expname,
+                                                                          channels=['Received_NMF_Treatment'],
+                                                                          sweep_variables=["Run_Number",
+                                                                                           "admin_name"],
+                                                                          working_dir=working_dir,
+                                                                          start_year=start_year,
+                                                                          end_year=end_year)
+        else:
+            cur_monthlyTreatedCasesAnalyzer = monthlyTreatedCasesAnalyzer(expt_name=expname,
+                                                                          channels=report_count_channels,
+                                                                          sweep_variables=["Run_Number",
+                                                                                           "admin_name"],
+                                                                          working_dir=working_dir,
+                                                                          start_year=start_year,
+                                                                          end_year=end_year)
 
-            analyzers = [
-                monthlyU5PfPRAnalyzer(expt_name=expname,
-                                      sweep_variables=["Run_Number", "admin_name"],
-                                      working_dir=working_dir,
-                                      start_year=start_year,
-                                      end_year=end_year),
-                # # ==== <- remove U1 for 2010-2020 if no IPTi
-                # monthlyU1PfPRAnalyzer(expt_name=expname,
-                #                       sweep_variables=["Run_Number", "admin_name"],
-                #                       working_dir=working_dir,
-                #                       start_year=start_year,
-                #                       end_year=end_year),
-                # # =====
-                cur_monthlyTreatedCasesAnalyzer,
-                monthlyEventAnalyzer(expt_name=expname,
-                                     channels=report_count_channels,
-                                     sweep_variables=["Run_Number", "admin_name"],
-                                     working_dir=working_dir,
-                                     start_year=start_year,
-                                     end_year=end_year),
-                monthlySevereTreatedByAgeAnalyzer(expt_name=expname,
-                                                  sweep_variables=["Run_Number", "admin_name"],
-                                                  working_dir=working_dir,
-                                                  start_year=start_year,
-                                                  end_year=end_year,
-                                                  agebins=[5, 120]),
-                MonthlyNewInfectionsAnalyzer(expt_name=expname,
-                                             sweep_variables=["Run_Number", "admin_name"],
-                                             working_dir=working_dir,
-                                             start_year=start_year,
-                                             end_year=end_year,
-                                             input_filename_base='MalariaSummaryReport_Monthly',
-                                             output_filename='newInfections_PfPR_cases_monthly_byAgeGroup.csv'),
-                MonthlyNewInfectionsAnalyzer_withU5(expt_name=expname,
-                                                    sweep_variables=["Run_Number", "admin_name"],
-                                                    working_dir=working_dir,
-                                                    start_year=start_year,
-                                                    end_year=end_year,
-                                                    input_filename_base='MalariaSummaryReport_Monthly',
-                                                    output_filename='newInfections_PfPR_cases_monthly_byAgeGroup_withU5.csv'),
-                MonthlyNewInfectionsAnalyzerByAge(expt_name=expname,
-                                                  sweep_variables=["Run_Number", "admin_name"],
-                                                  working_dir=working_dir,
-                                                  start_year=start_year,
-                                                  end_year=end_year,
-                                                  input_filename_base='MalariaSummaryReport_Monthly',
-                                                  output_filename='newInfections_PfPR_cases_monthly_byAgeGroup.csv')
+        analyzers = [
+            monthlyU5PfPRAnalyzer(expt_name=expname,
+                                  sweep_variables=["Run_Number", "admin_name"],
+                                  working_dir=working_dir,
+                                  start_year=start_year,
+                                  end_year=end_year),
+            # # ==== <- remove U1 for 2010-2020 if no IPTi
+            # monthlyU1PfPRAnalyzer(expt_name=expname,
+            #                       sweep_variables=["Run_Number", "admin_name"],
+            #                       working_dir=working_dir,
+            #                       start_year=start_year,
+            #                       end_year=end_year),
+            # # =====
+            cur_monthlyTreatedCasesAnalyzer,
+            monthlyEventAnalyzer(expt_name=expname,
+                                 channels=report_count_channels,
+                                 sweep_variables=["Run_Number", "admin_name"],
+                                 working_dir=working_dir,
+                                 start_year=start_year,
+                                 end_year=end_year),
+            monthlySevereTreatedByAgeAnalyzer(expt_name=expname,
+                                              sweep_variables=["Run_Number", "admin_name"],
+                                              working_dir=working_dir,
+                                              start_year=start_year,
+                                              end_year=end_year,
+                                              agebins=[5, 120]),
+            MonthlyNewInfectionsAnalyzer(expt_name=expname,
+                                         sweep_variables=["Run_Number", "admin_name"],
+                                         working_dir=working_dir,
+                                         start_year=start_year,
+                                         end_year=end_year,
+                                         input_filename_base='MalariaSummaryReport_Monthly',
+                                         output_filename='newInfections_PfPR_cases_monthly_byAgeGroup.csv'),
+            MonthlyNewInfectionsAnalyzer_withU5(expt_name=expname,
+                                                sweep_variables=["Run_Number", "admin_name"],
+                                                working_dir=working_dir,
+                                                start_year=start_year,
+                                                end_year=end_year,
+                                                input_filename_base='MalariaSummaryReport_Monthly',
+                                                output_filename='newInfections_PfPR_cases_monthly_byAgeGroup_withU5.csv'),
+            MonthlyNewInfectionsAnalyzerByAge(expt_name=expname,
+                                              sweep_variables=["Run_Number", "admin_name"],
+                                              working_dir=working_dir,
+                                              start_year=start_year,
+                                              end_year=end_year,
+                                              input_filename_base='MalariaSummaryReport_Monthly',
+                                              output_filename='newInfections_PfPR_cases_monthly_byAgeGroup.csv')
 
-            ]
-            am = AnalyzeManager(platform=platform, ids=[expid, ItemType.EXPERIMENT], analyzers=analyzers,
-                                force_analyze=True)
-            am.analyze()
+        ]
+        am = AnalyzeManager(platform=platform, ids=[(expid, ItemType.EXPERIMENT)], analyzers=analyzers,
+                            analyze_failed_items=True)
+        am.analyze()
 
-    elif include_LLINp:
-        for expname, expid in expt_ids.items():
-            print('running expt %s' % expname)
-            analyzers = [
-                monthlyU5PfPRAnalyzer(expt_name=expname,
-                                      sweep_variables=["Run_Number", "admin_name"],
-                                      start_year=start_year,
-                                      end_year=end_year),
-                monthlyTreatedCasesAnalyzer(expt_name=expname,
-                                            sweep_variables=["Run_Number", "admin_name"],
-                                            working_dir=working_dir,
-                                            start_year=start_year,
-                                            end_year=end_year),
-                monthlyEventAnalyzer(expt_name=expname,
-                                     sweep_variables=["Run_Number", "admin_name"],
-                                     working_dir=working_dir,
-                                     start_year=start_year,
-                                     end_year=end_year),
-                monthlySevereTreatedByAgeAnalyzer(expt_name=expname,
-                                                  sweep_variables=["Run_Number", "admin_name"],
-                                                  working_dir=working_dir,
-                                                  start_year=start_year,
-                                                  end_year=end_year,
-                                                  agebins=[5, 120]),
-                MonthlyNewInfectionsAnalyzer(expt_name=expname,
-                                             sweep_variables=["Run_Number", "admin_name"],
-                                             working_dir=working_dir,
-                                             start_year=start_year,
-                                             end_year=end_year,
-                                             input_filename_base='MalariaSummaryReport_Monthly',
-                                             output_filename='newInfections_PfPR_cases_monthly_byAgeGroup.csv'),
-                MonthlyNewInfectionsAnalyzer(expt_name=expname,
-                                             sweep_variables=["Run_Number", "admin_name"],
-                                             working_dir=working_dir,
-                                             start_year=start_year,
-                                             end_year=end_year,
-                                             input_filename_base='MalariaSummaryReport_Monthly_LLIN',
-                                             output_filename='newInfections_PfPR_cases_monthly_byAgeGroup_LLIN.csv'),
-                MonthlyNewInfectionsAnalyzer(expt_name=expname,
-                                             sweep_variables=["Run_Number", "admin_name"],
-                                             working_dir=working_dir,
-                                             start_year=start_year,
-                                             end_year=end_year,
-                                             input_filename_base='MalariaSummaryReport_Monthly_NoLLIN',
-                                             output_filename='newInfections_PfPR_cases_monthly_byAgeGroup_NoLLIN.csv'),
-                MonthlyNewInfectionsAnalyzerByAge(expt_name=expname,
-                                                  sweep_variables=["Run_Number", "admin_name"],
-                                                  working_dir=working_dir,
-                                                  start_year=start_year,
-                                                  end_year=end_year,
-                                                  input_filename_base='MalariaSummaryReport_Monthly',
-                                                  output_filename='newInfections_PfPR_cases_monthly_byAgeGroup.csv')
-            ]
-            am = AnalyzeManager(platform=platform, ids=[expid, ItemType.EXPERIMENT], analyzers=analyzers,
-                                force_analyze=True)
-            am.analyze()
-
-    elif itn_comparison:
-        for expname, expid in expt_ids.items():
-            print('running expt %s' % expname)
-            report_count_channels = ['Received_Treatment', 'Received_Severe_Treatment', 'Received_NMF_Treatment',
-                                     'Received_Self_Medication', 'Bednet_Got_New_One', 'Bednet_Using',
-                                     'Received_Campaign_Drugs', 'Received_IRS'
-                                     ]
-            report_count_channels = []
-
-            if 'no_IRS_SMC_ITN_CM' in expname:
-                cur_monthlyTreatedCasesAnalyzer = monthlyTreatedCasesAnalyzer(expt_name=expname,
-                                                                              channels=['Received_NMF_Treatment'],
-                                                                              sweep_variables=["Run_Number",
-                                                                                               "admin_name"],
-                                                                              working_dir=working_dir,
-                                                                              start_year=start_year,
-                                                                              end_year=end_year)
-            else:
-                cur_monthlyTreatedCasesAnalyzer = monthlyTreatedCasesAnalyzer(expt_name=expname,
-                                                                              channels=report_count_channels,
-                                                                              sweep_variables=["Run_Number",
-                                                                                               "admin_name"],
-                                                                              working_dir=working_dir,
-                                                                              start_year=start_year,
-                                                                              end_year=end_year)
-
-            analyzers = [
-                MonthlyNewInfectionsAnalyzer_withU5(expt_name=expname,
-                                                    sweep_variables=["Run_Number", "admin_name", "Habitat_Multiplier"],
-                                                    working_dir=working_dir,
-                                                    start_year=start_year,
-                                                    end_year=end_year,
-                                                    input_filename_base='MalariaSummaryReport_Monthly',
-                                                    output_filename='newInfections_PfPR_cases_monthly_byAgeGroup_withU5.csv'),
-
-            ]
-
-            am = AnalyzeManager(platform=platform, ids=[expid, ItemType.EXPERIMENT], analyzers=analyzers,
-                                force_analyze=True)
-            am.analyze()

@@ -2,7 +2,9 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/../emodpy-malaria/.idea/emodpy-malaria.iml" filepath="$PROJECT_DIR$/../emodpy-malaria/.idea/emodpy-malaria.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/emodpy-snt.iml" filepath="$PROJECT_DIR$/.idea/emodpy-snt.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../malaria-snt-projects/.idea/malaria-snt-projects.iml" filepath="$PROJECT_DIR$/../malaria-snt-projects/.idea/malaria-snt-projects.iml" />
     </modules>
   </component>
 </project>

@@ -53,7 +53,9 @@ add_mortality_to_file = function(itn_coverage_filename, mortality_df_name, itn_c
   }
   
   # save csv
-  itn_coverage_mort_filename = gsub('coverages','coverages_mort', itn_coverage_filename)
+  itn_coverage_mort_filename = gsub('_coverage_dates_LGA','', itn_coverage_filename)
+  itn_coverage_mort_filename = gsub('_coverages','', itn_coverage_mort_filename)
+  itn_coverage_mort_filename = gsub('_coverage','', itn_coverage_mort_filename)
   write.csv(itn_cov_mort, paste0(itn_coverage_mort_dir, '/', itn_coverage_mort_filename), row.names=FALSE)
 }
 
@@ -67,6 +69,8 @@ add_bioassay_mortality_to_itn_file = function(hbhi_dir, mortality_df_name){
   itn_coverage_mort_dir = paste0(hbhi_dir, '/simulation_inputs/intermediate_files/ITN_coverage_mort')  # intermediate files that have coverage and mortality (but not killing and blocking)
   ifelse(!dir.exists(itn_coverage_mort_dir), dir.create(itn_coverage_mort_dir), FALSE)
   itn_files = list.files(itn_coverage_dir, pattern = '.csv')
+  # remove state-level file created for records
+  itn_files = itn_files[!grepl('state',itn_files)]
   
   for(ii in 1:length(itn_files)){
     itn_coverage_filename = itn_files[ii]

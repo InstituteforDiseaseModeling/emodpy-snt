@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import manifest
 
-burnin_id = 'cab2ccbc-f70a-ee11-aa07-b88303911bc1'  # generated from serialize_transmission_sweep
+burnin_id = 'eb89ea6e-2f53-ee11-aa0a-b88303911bc1'  # generated from serialize_transmission_sweep
 expname = 'PfPR_sweep_main_example'
 population_size = 6000  # needs to match burnin simulation population size
 num_seeds = 1

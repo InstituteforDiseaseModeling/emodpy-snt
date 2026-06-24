@@ -11,34 +11,112 @@ library(pals)
 library(prettyGraphs) 
 library(lubridate)
 library(gridExtra) 
-
+library(geofacet)
+library(tidyr)
 
 ##############################################################
 # sample net retention times and parameterize lognormal
 ##############################################################
-# get the mu parameter for the lognormal net retention time (the function used in dtk simulations) that produces a distribution with the same mean value as the retention-time function used in Amelia's paper
-#    this value is calculated from the net halflife in the function from Amelia's paper
-#    process: 1) use median value from distribution A to get the mean value from distribution A
-#             2) find the mu lognormal parameter such that the mean of the lognormal distribution has the same mean as distribution A
-# retention-time function (1-CDF) from Amelia's paper:
-#    A(tt) = exp(18 - 18 / (1 - (tt/tau_days)^2)), 
-#    where tau_days = A_halflife_days * (1 - 18 / (18 - log(0.5)))^(-1/2)
-# retention-time probability distribution = d/dt[1-CDF] = A'(tt)
-#    A'(tt) = 18*exp(18 - 18 / (1 - (tt/tau_days)^2)) * 2*tt / tau_days^2 / (1 - (tt/tau_days)^2)^2)
-get_lognormal_mu_from_A_halflife = function(A_halflife_days=(1.31*365), itn_lognorm_sigma=0.8){
-  # calculate tau as used in Amelia's retention function
-  tau_days = A_halflife_days * (1 - 18 / (18 - log(0.5)))^(-1/2)  
+
+# ============================================================
+# function: get_lognormal_mu_from_A_halflife
+# get the mu parameter for the lognormal net retention time (the function used in dtk simulations) that produces a distribution with the same mean or median value (depending on user selection) as the retention-time function used in Amelia's paper
+#     note that matching the median retention time will have a longer lognormal retention than matching the mean retention time
+#
+# Matches a lognormal distribution to the smooth-compact Loss
+# retention function using two approaches:
+#
+#   Method 1 (median match): set lognormal median = Loss half-life
+#     mu = log(halflife_day)
+#
+#   Method 2 (mean match): set lognormal mean = Loss mean
+#     mu = log(E[T_Loss]) - sigma^2 / 2
+#     where E[T_Loss] = integral of Loss(t, kappa, tau) from 0 to tau
+#       (computed numerically; requires kappa and tau)
+#
+# Args:
+#   halflife_day  : half-life of the Loss function (days); the time at
+#                   which Loss(t) = 0.5
+#   sigma         : SD of the log (log-scale SD) of the lognormal
+#   kappa         : shape parameter of the Loss function
+#   match_type    : "median" to match the half-life (Method 1, default)
+#                   "mean"   to match the mean retention time (Method 2)
+#
+# Returns:
+#   A single numeric value: the lognormal mu for the chosen match_type.
+#   A summary data.frame comparing both methods is printed as a side effect.
+# ============================================================
+
+get_lognormal_mu_from_A_halflife = function(A_halflife_day=(2.2*365), itn_lognorm_sigma=0.8, kappa=20, match_type="median", verbose=FALSE) {
+  match_type <- match.arg(match_type, c("median","mean"))
   
-  # find the mean (expected value) of the retention time distribution A(tt)... this will later be set as the mean of the dtk lognormal retention time distribution
-  # numeric approximation to get mean
-  xx = seq(0,(4.5*A_halflife_days),0.1)
-  A_mean = weighted.mean(xx,  18*exp(18 - 18 / (1 - (xx/tau_days)^2)) * 2*xx / tau_days^2 / (1 - (xx/tau_days)^2)^2)
+  # --- Derive tau from halflife and kappa ------------------------------
+  # From Loss(h, kappa, tau) = 0.5:  h = tau * sqrt(log(2) / (kappa + log(2)))
+  # Rearranging:
+  tau <- A_halflife_day * sqrt((kappa + log(2)) / log(2))
   
-  # the mean of the lognormal distribution is exp(mu + sigma^2 / 2), so mu = log(A_mean) - sigma^2 / 2
-  lognormal_mu = log(A_mean) - itn_lognorm_sigma^2 / 2
-  if(is.na(lognormal_mu)) warning('PROBLEM DETEcTED: sampled lognormal mu for net retention distribution is NA. This may be because the expected value was numerically calculated using too large a maximum retention time.')
-  return(lognormal_mu)
+  # --- Method 1: match lognormal median to Loss half-life --------------
+  mu_m1 <- log(A_halflife_day)
+
+  # --- Method 2 / verbose: requires numerical integration --------------
+  # Only compute when needed to avoid overhead during repeated sampling.
+  if (match_type == "mean" || verbose) {
+    loss_fn  <- function(t) exp(kappa - kappa / (1 - (t / tau)^2))
+    E_T_loss <- integrate(
+      loss_fn,
+      lower        = 0,
+      upper        = tau * (1 - 1e-8),
+      subdivisions = 500L,
+      rel.tol      = 1e-8
+    )$value
+    mu_m2 <- log(E_T_loss) - itn_lognorm_sigma^2 / 2
+  }
+
+  # --- Verbose comparison table ----------------------------------------
+  if (verbose) {
+    df <- data.frame(
+      method           = c("M1_median_match", "M2_mean_match"),
+      mu               = c(mu_m1, mu_m2),
+      lognormal_median = c(exp(mu_m1),                            exp(mu_m2)),
+      lognormal_mean   = c(exp(mu_m1 + itn_lognorm_sigma^2 / 2), exp(mu_m2 + itn_lognorm_sigma^2 / 2)),
+      loss_halflife    = A_halflife_day,
+      loss_mean        = E_T_loss,
+      tau              = tau
+    )
+    print(df)
+  }
+
+  if (match_type == "median") mu_m1 else mu_m2
 }
+
+
+
+
+# OLD VERSION
+# #    this value is calculated from the net halflife in the function from Amelia's paper
+# #    process: 1) use median value from distribution A to get the mean value from distribution A
+# #             2) find the mu lognormal parameter such that the mean of the lognormal distribution has the same mean as distribution A
+# # retention-time function (1-CDF) from Amelia's paper:
+# #    A(tt) = exp(18 - 18 / (1 - (tt/tau_days)^2)), 
+# #    where tau_days = A_halflife_days * (1 - 18 / (18 - log(0.5)))^(-1/2)
+# # retention-time probability distribution = d/dt[1-CDF] = A'(tt)
+# #    A'(tt) = 18*exp(18 - 18 / (1 - (tt/tau_days)^2)) * 2*tt / tau_days^2 / (1 - (tt/tau_days)^2)^2)
+# get_lognormal_mu_from_A_halflife = function(A_halflife_days=(1.31*365), itn_lognorm_sigma=0.8){
+#   # calculate tau as used in Amelia's retention function
+#   tau_days = A_halflife_days * (1 - 18 / (18 - log(0.5)))^(-1/2)  
+#   
+#   # find the mean (expected value) of the retention time distribution A(tt)... this will later be set as the mean of the dtk lognormal retention time distribution
+#   # numeric approximation to get mean
+#   xx = seq(0,(4.5*A_halflife_days),0.1)
+#   A_mean = weighted.mean(xx,  18*exp(18 - 18 / (1 - (xx/tau_days)^2)) * 2*xx / tau_days^2 / (1 - (xx/tau_days)^2)^2)
+#   
+#   # the mean of the lognormal distribution is exp(mu + sigma^2 / 2), so mu = log(A_mean) - sigma^2 / 2
+#   lognormal_mu = log(A_mean) - itn_lognorm_sigma^2 / 2
+#   if(is.na(lognormal_mu)) warning('PROBLEM DETEcTED: sampled lognormal mu for net retention distribution is NA. This may be because the expected value was numerically calculated using too large a maximum retention time.')
+#   return(lognormal_mu)
+# }
+
+
 
 # from the distribution of median LLIN retention times, sample median retention times and convert them into mus for the lognormal distribution used in the dtk
 sample_net_longevity_params = function(hbhi_dir, num_samples=50, itn_lognorm_sigma=0.8,
@@ -99,6 +177,101 @@ calc_access_from_npc = function(access, npc_access_param1=0.98, npc_access_param
 }
 
 
+
+##############################################################
+# when cluster-level DHS data are not available but state-level ones are, add that information in the same format so that it can be used when estimating ITN coverage
+##############################################################
+add_state_DHS_ITN = function(additional_ITN_DHS_years, additional_ITN_DHS_files, ds_pop_df_filename){
+  admin_info = read.csv(ds_pop_df_filename)
+  net_dhs_info = read.csv(paste0(hbhi_dir, '/estimates_from_DHS/DHS_ITN_dates_and_rates.csv'))
+  net_dhs_info$date = as.Date(net_dhs_info$date, tryFormats=c('%m/%d/%Y', '%m-%d-%Y', '%Y-%m-%d'))  
+  net_dhs_info_original = net_dhs_info
+  cur_dhs_years = unique(year(net_dhs_info$date))
+  file_revised = FALSE
+  
+  for(yy in 1:length(additional_ITN_DHS_years)){
+    new_dhs_year = additional_ITN_DHS_years[yy]
+    # check this year doesn't already exist in net_dhs_info
+    if(!(new_dhs_year %in% cur_dhs_years)){
+      file_revised=TRUE
+      # read in state-level DHS ITN data for this year
+      dhs_itn_state_cur = read.csv(additional_ITN_DHS_files[yy]) %>%
+        rename(date = assumed_survey_date) %>%
+        dplyr::select(State, itn_u5_rate, date) %>%
+        mutate(date = as.Date(date, format='%m/%d/%Y'),
+               State = str_trim(State, side = "right"))  # remove spaces from end of State names
+      
+      # standardize state names
+      dhs_itn_state_cur = standardize_state_names_in_df(target_names_df=admin_info, origin_names_df=dhs_itn_state_cur, target_names_col='State', origin_names_col='State')
+      
+      # create values at the LGA level
+      dhs_itn_admin_cur = merge(dhs_itn_state_cur, admin_info[,c('admin_name', 'State')], all=TRUE) %>%
+        rename(NOMREGION = State) %>%
+        dplyr::select(-matched_name)
+      
+      # merge into existing net_dhs_info
+      net_dhs_info = merge(net_dhs_info, dhs_itn_admin_cur, all=TRUE)
+    }
+  }
+  if(file_revised){
+    write.csv(net_dhs_info, paste0(hbhi_dir, '/estimates_from_DHS/DHS_ITN_dates_and_rates.csv'), row.names=FALSE)
+    write.csv(net_dhs_info_original, paste0(hbhi_dir, '/estimates_from_DHS/DHS_ITN_dates_and_rates_priorVersion.csv'), row.names=FALSE)
+  }
+  return(net_dhs_info)
+}
+
+
+
+
+
+##############################################################
+# get state-level fraction of ITNs that came from mass distributions
+##############################################################
+get_itn_cov_attrib_campaigns = function(net_dhs_info, hbhi_dir, years=NA, overlap_dhs_years=NA){
+  campaign_source_all = read.csv(paste0(hbhi_dir, '/estimates_from_DHS/itn_source_state_level_all_years.csv')) %>%
+    dplyr::select(State, year, frac_campaign)
+  net_dhs_info$year = year(net_dhs_info$date)
+  all_survey_years = unique(net_dhs_info$year)
+  
+  # some DHS/MIS surveys span over multiple years. in these cases, we want the fraction of ITNs from campaign to apply to both years
+  if(any(!is.na(overlap_dhs_years))){
+    # create a lookup table to see the additional years for each survey
+    additional_year_lookup = data.frame(years, overlap_dhs_years)
+    lookup_non_na = additional_year_lookup %>% filter(!is.na(overlap_dhs_years))
+    
+    campaign_source_all = lookup_non_na %>%
+      # keep only rows with non-missing years and overlap_dhs_years
+      filter(!is.na(years), !is.na(overlap_dhs_years)) %>%
+      group_map(~ {
+        orig_year <- .x$years[1]
+        new_year  <- .x$overlap_dhs_years[1]
+        
+        campaign_source_all %>%
+          filter(year == orig_year) %>%
+          mutate(year = new_year)
+      }) %>%
+      bind_rows() %>% # combine all the new rows
+      bind_rows(campaign_source_all) %>%  # add to the original df
+      distinct() 
+  }
+  
+  # some survey years do not have estimates of the fraction of ITNs from campaigns. in those years, we use the average for each state when data is available
+  campaign_complete = campaign_source_all %>%
+    group_by(State) %>%
+    # make sure every state has all years
+    complete(year = all_survey_years) %>%
+    # fill estimate with state mean if missing
+    mutate(frac_campaign = ifelse(is.na(frac_campaign), mean(frac_campaign, na.rm = TRUE), frac_campaign)) %>%
+    ungroup() %>%
+    rename(NOMREGION = State)
+
+  # merge into the DHS coverage estimates df and adjust the coverage rates to reflect coverage from campaign-distributed ITNs
+  net_campaign_dhs_info = merge(net_dhs_info, campaign_complete, all.x=TRUE) %>%
+    mutate(across(contains("_rate"), ~ .x * frac_campaign))
+  return(net_campaign_dhs_info)
+}
+
+
 ############################################################################################################################
 ############################################################################################################################
 # back-calculated mass distribution coverage from observed net use at time of DHS survey
@@ -112,7 +285,7 @@ calc_access_from_npc = function(access, npc_access_param1=0.98, npc_access_param
 aggregate_itn_dhs_data_across_years = function(hbhi_dir, years, itn_variables, min_num_total=30, overwrite=FALSE){
   net_dhs_filename = paste0(hbhi_dir, '/estimates_from_DHS/DHS_ITN_dates_and_rates.csv')
   if(file.exists(net_dhs_filename) & !(overwrite)){
-    net_dhs_info = read.csv(net_dhs_filename)[,-1]
+    net_dhs_info = read.csv(net_dhs_filename)
   } else{
     net_dhs_info = data.frame()
     for(yy in 1:length(years)){
@@ -126,7 +299,7 @@ aggregate_itn_dhs_data_across_years = function(hbhi_dir, years, itn_variables, m
     }
     colnames(net_dhs_info)[which(colnames(net_dhs_info)=='NOMDEP')] = 'admin_name'
     colnames(net_dhs_info)[which(colnames(net_dhs_info)=='mean_date')] = 'date'
-    write.csv(net_dhs_info, paste0(hbhi_dir, '/estimates_from_DHS/DHS_ITN_dates_and_rates.csv'))
+    write.csv(net_dhs_info, net_dhs_filename, row.names=FALSE)
   }
   return(net_dhs_info)
 }
@@ -152,17 +325,26 @@ aggregate_itn_dhs_data_across_years = function(hbhi_dir, years, itn_variables, m
 #    - net_life_lognormal_mu  # for the Expiration_Period_Log_Normal_Mu parameter in the lognormal decay distribution (time before nets discarded, lost, forgotten, etc.).
 #    - net_life_lognormal_sigma
 # single seed and admins may have different mass distributions dates
-create_itn_input_from_DHS_differentDates = function(hbhi_dir, itn_variables, itn_distributions_by_admin_filename, sim_start_year=2010, maximum_coverage=0.9,
+create_itn_input_from_DHS_differentDates = function(hbhi_dir, itn_variables, itn_distributions_by_admin_filename, grid_layout_state_locations, ds_pop_df_filename, sim_start_year=2010, maximum_coverage=0.9,
                                                     seasonality_monthly_scalar,  # adjust net usage for seasonality
-                                                    years, min_num_total=30, default_first_coverage=0.1, itn_variable_base='itn_u5', save_age_ratio_plots=FALSE, save_timeseries_coverage_plots=FALSE 
+                                                    years, min_num_total=30, default_first_coverage=0.1, itn_variable_base='itn_u5', save_age_ratio_plots=FALSE, save_timeseries_coverage_plots=FALSE,
+                                                    additional_ITN_DHS_years=c(), additional_ITN_DHS_files=c(), overlap_dhs_years=NA
 ){
   # get the distribution dates for each admin
   itn_distributions_by_admin = read.csv(itn_distributions_by_admin_filename) 
   itn_distributions_by_admin$date = as.Date(itn_distributions_by_admin$date)
   # get the DHS value and date in each admin (includes all ITN variables)
   net_dhs_info = aggregate_itn_dhs_data_across_years(hbhi_dir, years, itn_variables, min_num_total)
-  net_dhs_info$date = as.Date(net_dhs_info$date)  
   
+  # add any additional DHS years that were recorded at the state level rather than cluster level
+  if((length(additional_ITN_DHS_years)>0) & is.numeric(additional_ITN_DHS_years[1])){
+    net_dhs_info = add_state_DHS_ITN(additional_ITN_DHS_years=additional_ITN_DHS_years, additional_ITN_DHS_files=additional_ITN_DHS_files, ds_pop_df_filename=ds_pop_df_filename)
+  }
+  net_dhs_info$date = as.Date(net_dhs_info$date, tryFormats=c('%m/%d/%Y', '%m-%d-%Y', '%Y-%m-%d'))  
+  
+  # adjust DHS/MIS survey coverage to capture the ITNs from mass campaigns
+  net_dhs_info = get_itn_cov_attrib_campaigns(net_dhs_info=net_dhs_info, hbhi_dir=hbhi_dir, years=years, overlap_dhs_years=overlap_dhs_years)
+
   # read in sampled retention lognormal mus and sigmas and take the first (expected) value
   net_discard_decay = read.csv(paste0(hbhi_dir, '/simulation_inputs/itn_discard_decay_params.csv'))
   net_life_lognormal_mu = net_discard_decay$net_life_lognormal_mu[1]
@@ -171,6 +353,7 @@ create_itn_input_from_DHS_differentDates = function(hbhi_dir, itn_variables, itn
   
   # iterate through admins where distributions occurred, calculating the distribution coverages from the coverage at the next DHS survey year and the retention times
   all_admins = unique(itn_distributions_by_admin$admin_name)
+  all_admins = all_admins[!is.na(all_admins)]
   coverage_df = data.frame()
   for(aa in 1:length(all_admins)){
     # subset dhs coverage data and itn distribution dates to this admin
@@ -291,18 +474,23 @@ create_itn_input_from_DHS_differentDates = function(hbhi_dir, itn_variables, itn
   
   if(save_timeseries_coverage_plots){
     
-    # plot timeseries of ITN coverage from mass distributions in each LGA given distribution schedule and net decay parameters
+    # plot timeseries of ITN coverage from mass distributions in each LGA given distribution schedule, seasonality in ITN use, and net decay parameters
     # also include dots for DHS observations
     # data format: a long dataframe with columns for LGA name, state name, archetype name, date, and coverage
     net_dhs_info$State = net_dhs_info$NOMREGION
     coverage_df = read.csv(paste0(hbhi_dir, '/simulation_inputs/intermediate_files/ITN_coverage/itn_mass_coverages_2010_toPresent.csv'))
     coverage_df$date = as.Date(coverage_df$date)
     coverage_df$matched_dhs_date = as.Date(coverage_df$matched_dhs_date)
+    coverage_df = coverage_df[!is.na(coverage_df$date), ]
+    if(nrow(coverage_df) == 0){
+      stop("No valid dates found in coverage_df$date after parsing.")
+    }
     all_admins = unique(coverage_df$admin_name)
     coverage_timeseries = data.frame('admin_name'=c(), 'State'=c(), 'date'=c(), 'coverage'=c())
     first_day = as.Date('2010-01-01')
+    final_day = max(coverage_df$date, na.rm=TRUE)
     # date_vector = seq(first_day, as.Date('2022-01-01'), by=1)
-    date_vector = seq.Date(first_day, as.Date('2023-01-01'), by='month')
+    date_vector = seq.Date(first_day, final_day, by='month')
     timeseries_length = length(date_vector)
     for(aa in 1:length(all_admins)){
       cur_distributions = coverage_df[coverage_df$admin_name == all_admins[aa],]
@@ -331,7 +519,7 @@ create_itn_input_from_DHS_differentDates = function(hbhi_dir, itn_variables, itn
       geom_point(data=net_dhs_info, aes(x=date,y=itn_u5_rate), shape=21, col='black') +
       geom_point(data=coverage_df, aes(x=date), y=1, col='black', shape='|', size=1) +
       geom_point(data=coverage_df, aes(x=date), y=0.98, col='black', shape='V', size=1) +
-      coord_cartesian(xlim=c(as.Date('2010-01-01'), as.Date('2023-01-01'))) +
+      coord_cartesian(xlim=c(first_day, final_day)) +
       theme_bw()+
       theme(legend.position='none') +
       facet_wrap('State', nrow=5)
@@ -341,7 +529,7 @@ create_itn_input_from_DHS_differentDates = function(hbhi_dir, itn_variables, itn
       geom_line(data=coverage_timeseries, aes(x=date, y=coverage, col=admin_name)) +
       geom_point(data=net_dhs_info, aes(x=date,y=itn_u5_rate, col=admin_name)) +
       geom_point(data=net_dhs_info, aes(x=date,y=itn_u5_rate), shape=21, col='black') +
-      coord_cartesian(xlim=c(as.Date('2010-01-01'), as.Date('2023-01-01'))) +
+      coord_cartesian(xlim=c(first_day, final_day)) +
       theme_bw()+
       theme(legend.position='none') +
       facet_wrap('State', nrow=5)
@@ -355,11 +543,111 @@ create_itn_input_from_DHS_differentDates = function(hbhi_dir, itn_variables, itn
       geom_point(data=net_dhs_info, aes(x=date,y=itn_u5_rate), shape=21, col='black') +
       geom_point(data=coverage_df, aes(x=date), y=1, col='black', shape='|', size=1) +
       geom_point(data=coverage_df, aes(x=date), y=0.98, col='black', shape='V', size=1) +
-      coord_cartesian(xlim=c(as.Date('2010-01-01'), as.Date('2023-01-01'))) +
+      coord_cartesian(xlim=c(first_day, final_day)) +
       theme_bw()+
       theme(legend.position='none') +
       facet_wrap('State', nrow=5)
     ggsave(filename=paste0(hbhi_dir, '/simulation_inputs/plots/itn_use_rate_timeseries_extrapolation_build0.png'), plot=ggb, width=18, height=15, units='in', dpi=900)
+    
+    
+    itn_distributions_by_state_raw_filename = gsub('/[^/]*.csv','/uncorrected_mass_dist_dates_state.csv',itn_distributions_by_admin_filename)
+    if(file.exists(itn_distributions_by_state_raw_filename)){
+      llin_info_raw_state = read.csv(itn_distributions_by_state_raw_filename)
+      net_dhs_info$code = net_dhs_info$NOMREGION
+      llin_info_raw_state$code = llin_info_raw_state$State
+      llin_info_raw_state$date = as.Date(llin_info_raw_state$date)
+
+      ggc1 = ggplot(grid_layout_state_locations)+
+        # geom_vline(data=llin_info_raw_state, aes(xintercept=date), color='darkgreen')+
+        geom_hline(aes(yintercept=0), color='black')+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate), color='black', size=0.8)+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate, color=admin_name), size=0.6)+
+        scale_y_continuous(guide = guide_axis(check.overlap = TRUE)) +
+        scale_x_date(guide = guide_axis(check.overlap = TRUE), breaks=as.Date(paste0(c(2012,2016,2020),'/01/01')), labels=c(2012,2016,2020)) +
+        coord_cartesian(xlim=c(first_day, final_day)) +
+        theme_classic()+
+        theme(legend.position='none') +
+        facet_geo(~code, grid = grid_layout_state_locations, label="name", scales='fixed') 
+      ggsave(filename=paste0(hbhi_dir, '/simulation_inputs/plots/itn_use_from_dhs.png'), plot=ggc1, width=9, height=6, units='in', dpi=1600)
+      
+      ggc = ggplot(grid_layout_state_locations)+
+        geom_vline(data=llin_info_raw_state, aes(xintercept=date), color='darkgreen')+
+        geom_hline(aes(yintercept=0), color='black')+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate), color='black', size=0.8)+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate, color=admin_name), size=0.6)+
+        scale_y_continuous(guide = guide_axis(check.overlap = TRUE)) +
+        scale_x_date(guide = guide_axis(check.overlap = TRUE), breaks=as.Date(paste0(c(2012,2016,2020),'/01/01')), labels=c(2012,2016,2020)) +
+        coord_cartesian(xlim=c(first_day, final_day)) +
+        theme_classic()+
+        theme(legend.position='none') +
+        facet_geo(~code, grid = grid_layout_state_locations, label="name", scales='fixed') 
+      ggsave(filename=paste0(hbhi_dir, '/simulation_inputs/plots/itn_use_from_dhs_and_raw_dist_dates.png'), plot=ggc, width=9, height=6, units='in', dpi=1600)
+      
+      coverage_df$code = coverage_df$State
+      ggd = ggplot(grid_layout_state_locations)+
+        geom_vline(data=llin_info_raw_state, aes(xintercept=date), color='darkgreen')+
+        geom_point(data=coverage_df, aes(x=date), y=1, col='blue', shape='|', size=7) +
+        geom_hline(aes(yintercept=0), color='black')+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate), color='black', size=0.8)+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate, color=admin_name), size=0.6)+
+        scale_y_continuous(guide = guide_axis(check.overlap = TRUE)) +
+        scale_x_date(guide = guide_axis(check.overlap = TRUE), breaks=as.Date(paste0(c(2012,2016,2020),'/01/01')), labels=c(2012,2016,2020)) +
+        coord_cartesian(xlim=c(first_day, final_day)) +
+        theme_classic()+
+        theme(legend.position='none') +
+        facet_geo(~code, grid = grid_layout_state_locations, label="name", scales='fixed') 
+      ggsave(filename=paste0(hbhi_dir, '/simulation_inputs/plots/itn_use_from_dhs_and_estimated_dist_dates.png'), plot=ggd, width=9, height=6, units='in', dpi=1600)
+      
+      ggdv2 = ggplot(grid_layout_state_locations)+
+        # geom_vline(data=llin_info_raw_state, aes(xintercept=date), color='darkgreen')+
+        geom_vline(data=coverage_df, aes(xintercept=date), color='blue',  size=0.3) +
+        geom_hline(aes(yintercept=0), color='black')+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate), color='black', size=0.8)+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate, color=admin_name), size=0.6)+
+        scale_y_continuous(guide = guide_axis(check.overlap = TRUE)) +
+        scale_x_date(guide = guide_axis(check.overlap = TRUE), breaks=as.Date(paste0(c(2012,2016,2020),'/01/01')), labels=c(2012,2016,2020)) +
+        coord_cartesian(xlim=c(first_day, final_day)) +
+        theme_classic()+
+        theme(legend.position='none') +
+        facet_geo(~code, grid = grid_layout_state_locations, label="name", scales='fixed') 
+      ggsave(filename=paste0(hbhi_dir, '/simulation_inputs/plots/itn_use_from_dhs_and_estimated_dist_dates_v2.png'), plot=ggdv2, width=9, height=6, units='in', dpi=1600)
+      
+      
+      coverage_timeseries$code = coverage_timeseries$State
+      gge = ggplot(grid_layout_state_locations)+
+        geom_line(data=coverage_timeseries, aes(x=date, y=adjusted_coverage, col=admin_name), linewidth=0.15) +
+        geom_vline(data=llin_info_raw_state, aes(xintercept=date), color='darkgreen')+
+        geom_point(data=coverage_df, aes(x=date), y=1, col='blue', shape='|', size=7) +
+        geom_hline(aes(yintercept=0), color='black')+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate), color='black', size=0.8)+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate, color=admin_name), size=0.6)+
+        scale_y_continuous(guide = guide_axis(check.overlap = TRUE)) +
+        scale_x_date(guide = guide_axis(check.overlap = TRUE), breaks=as.Date(paste0(c(2012,2016,2020),'/01/01')), labels=c(2012,2016,2020)) +
+        coord_cartesian(xlim=c(first_day, final_day)) +
+        theme_classic()+
+        theme(legend.position='none') +
+        facet_geo(~code, grid = grid_layout_state_locations, label="name", scales='fixed') 
+      ggsave(filename=paste0(hbhi_dir, '/simulation_inputs/plots/itn_use_timeseries_from_dhs_and_estimated_dist_dates.png'), plot=gge, width=9, height=6, units='in', dpi=1600)
+      
+      
+      ggev2 = ggplot(grid_layout_state_locations)+
+        geom_line(data=coverage_timeseries, aes(x=date, y=adjusted_coverage, col=admin_name), linewidth=0.15) +
+        # geom_vline(data=llin_info_raw_state, aes(xintercept=date), color='darkgreen')+
+        geom_vline(data=coverage_df, aes(xintercept=date), color='blue',  size=0.3) +
+        geom_hline(aes(yintercept=0), color='black')+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate), color='black', size=0.8)+
+        geom_point(data=net_dhs_info, aes(x=date, y=itn_u5_rate, color=admin_name), size=0.6)+
+        scale_y_continuous(guide = guide_axis(check.overlap = TRUE)) +
+        scale_x_date(guide = guide_axis(check.overlap = TRUE), breaks=as.Date(paste0(c(2012,2016,2020),'/01/01')), labels=c(2012,2016,2020)) +
+        coord_cartesian(xlim=c(first_day, final_day)) +
+        theme_classic()+
+        theme(legend.position='none') +
+        facet_geo(~code, grid = grid_layout_state_locations, label="name", scales='fixed') 
+      ggsave(filename=paste0(hbhi_dir, '/simulation_inputs/plots/itn_use_timeseries_from_dhs_and_estimated_dist_dates_v2.png'), plot=ggev2, width=9, height=6, units='in', dpi=1600)
+      
+      
+    }
+
   }
 }
 
@@ -534,7 +822,7 @@ create_seasonality_calibration_itn_from_DHS = function(hbhi_dir, itn_variables, 
   
   # iterate through variables (age groups)
   for(i_var in 1:length(itn_variables)){
-    coverage_df = data.frame('value' = archetype_rates[[paste0(itn_variables[i_var],'_rate')]], 'admin_name'=archetype_rates$archetype, 'year'=archetype_rates$year,'net_life_lognormal_mu'=rep(calib_net_life_lognormal_mu, nrow(archetype_rates)),'net_life_lognormal_sigma'=rep(calib_net_life_lognormal_sigma, nrow(archetype_rates)))
+    coverage_df = data.frame('value' = archetype_rates[[paste0(itn_variables[i_var],'_rate')]], 'admin_name'=archetype_rates$seasonality_archetype, 'year'=archetype_rates$year,'net_life_lognormal_mu'=rep(calib_net_life_lognormal_mu, nrow(archetype_rates)),'net_life_lognormal_sigma'=rep(calib_net_life_lognormal_sigma, nrow(archetype_rates)))
     
     
     # iterate through distribution years, calculating the distribution coverages from the coverage at the next DHS survey year and the retention times

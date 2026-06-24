@@ -119,7 +119,7 @@ def get_sweep_builders(**kwargs):
 
     sweepspace = {
         # rep_admin: np.logspace(-1.6, 2, 25) for rep_admin in lhdf['archetype'].values
-        rep_admin: [np.logspace(-1.6, 2, 25)[ii] for ii in [0, 4, 8, 12, 16, 20]] for rep_admin in
+        rep_admin: [np.logspace(-1.6, 2, 25)[ii] for ii in [0, 4, 8, 12]] for rep_admin in
         lhdf['archetype'].values  # make sure this matches the values used in the next step
     }
 

@@ -46,6 +46,7 @@ get_pop_size_infection_from_sim = function(first_year=2010, last_year=2019, admi
   
   # replace spaces with periods in column names
   colnames(sim_output) = gsub(' ', '.', colnames(sim_output))
+  sim_output = setorder(sim_output, admin_name,year,month)
   
   # each row corresponds to a month in the simulation
   months = rep(1:12, times=length(first_year:last_year))
@@ -167,6 +168,8 @@ get_pop_size_infection_from_sim = function(first_year=2010, last_year=2019, admi
   }
   return(list(pop_size, popUnder15_size, pop1530_size, pop3050_size, popOver50_size, prob_no_infection_1530, prob_no_infection_3050, pfpr_under15, pfpr_1530, pfpr_3050, pfpr_over50))
 }
+
+
 
 
 
@@ -767,6 +770,13 @@ adjust_sim_output_for_MiP = function(prob_severe_from_MiP=0.57,  # probability o
       (popUnder15_size + pop1530_size + pop3050_size + popOver50_size)
     
     
+    # calculate PfPR for population, unadjusted for IPTp
+    pfpr_allAges_noIPTp = (pfpr_under15 * popUnder15_size + 
+                             pfpr_1530 * pop1530_size + 
+                             pfpr_3050 * pop3050_size + 
+                             pfpr_over50 * popOver50_size) / 
+      (popUnder15_size + pop1530_size + pop3050_size + popOver50_size)
+    
     
     
     
@@ -874,6 +884,9 @@ adjust_sim_output_for_MiP = function(prob_severe_from_MiP=0.57,  # probability o
       if(all(as.integer(adjusted_allAgeMonthly$month[rows_adjusted_allAge_rr_ds][1:length(pop1530_size$month)]) == pop1530_size$month) & all(as.integer(adjusted_allAgeMonthly$year[rows_adjusted_allAge_rr_ds][1:length(pop1530_size$year)]) == pop1530_size$year)){
         new_pfpr = as.vector(as.matrix(pfpr_allAges_withIPTp[, ..i_MiP_col]))
         adjusted_allAgeMonthly[rows_adjusted_allAge_rr_ds[1:length(pop1530_size$month)], 'PfPR_MiP_adjusted' := new_pfpr]
+        
+        unadjusted_pfpr = as.vector(as.matrix(pfpr_allAges_noIPTp[, ..i_MiP_col]))
+        adjusted_allAgeMonthly[rows_adjusted_allAge_rr_ds[1:length(pop1530_size$month)], 'PfPR_unadjusted' := unadjusted_pfpr]
         
         new_severe_m = as.vector(as.matrix(num_severe_from_MiP[, ..i_MiP_col]))
         adjusted_allAgeMonthly[rows_adjusted_allAge_rr_ds[1:length(pop1530_size$month)], 'severe_maternal' := new_severe_m]

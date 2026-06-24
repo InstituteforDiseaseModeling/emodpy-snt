@@ -1,9 +1,15 @@
+import os
+import sys
+from pathlib import Path
 import manifest
 import params
+import argparse
 from idmtools.core.platform_factory import Platform
-from idmtools.entities.experiment import Experiment
-from idmtools.entities.templated_simulation import TemplatedSimulations
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from snt.helpers_run_simulation import  run_experiment, log
+
+tracking_file = os.path.join(manifest.CURRENT_DIR, "..", f"suite_tracking_{params.experiment_type}.csv")
 
 def _print_params():
     """
@@ -17,86 +23,37 @@ def _print_params():
     print("burnin_id: ", params.burnin_id)
 
 
-def _pre_run(experiment: Experiment, **kwargs):
-    """
-    Add extra work before run experiment.
-    Args:
-        experiment: idmtools Experiment
-        kwargs: additional parameters
-    Return:
-        None
-    """
-    from snt.utility.plugins import initialize_plugins
-    initialize_plugins(**kwargs)
-
-
-def _post_run(experiment: Experiment, **kwargs):
-    """
-    Add extra work after run experiment.
-    Args:
-        experiment: idmtools Experiment
-        kwargs: additional parameters
-    Return:
-        None
-    """
-    with open("monique\\run_future_scenarios\\experiment_id.txt", "w") as fd:
-        fd.write(experiment.uid.hex)
-    pass
-
-
-def _config_experiment(**kwargs):
-    """
-    Build experiment from task and builder. task is EMODTask. builder is SimulationBuilder used for config parameter sweeping.
-    Args:
-        kwargs: additional parameters
-    Return:
-        experiment
-    """
-    from config_sweep_builders import get_sweep_builders
-    from config_task import get_task
-
-    builders = get_sweep_builders(**kwargs)
-
-    task = get_task(**kwargs)
-
-    if manifest.sif_id:
-        task.set_sif(manifest.sif_id)
-
-    ts = TemplatedSimulations(base_task=task, builders=builders)
-
-    experiment = Experiment.from_template(ts, name=params.expname)
-
-    return experiment
-
-
-def run_experiment(**kwargs):
-    """
-    Get configured experiment and run.
-    Args:
-        kwargs: user inputs
-    Returns:
-        None
-    """
-    # make sure pass platform through
-    kwargs['platform'] = platform
-
-    _print_params()
-
-    experiment = _config_experiment(**kwargs)
-    _pre_run(experiment, **kwargs)
-    experiment.run(**kwargs)
-    _post_run(experiment, **kwargs)
-
-
 if __name__ == "__main__":
     """
     - show_warnings_once=True:  show api warnings for only one simulation
     - show_warnings_once=False: show api warnings for all simulations
     - show_warnings_once=None:  not show api warnings
     """
-    platform = Platform('CALCULON', node_group='idm_48cores')
-    # platform = Platform('IDMCLOUD', node_group='emod_abcd')
+    parser = argparse.ArgumentParser(description="Run experiment optionally using an existing suite_id")
+    parser.add_argument('--suite-id', type=str, help='Optional suite ID to reuse or track')
+    parser.add_argument('--scen-index', type=int, required=True, help='Index of scenario to run')
+    parser.add_argument('--scenario-fname', type=str, required=True)
+    parser.add_argument(
+        '--show-warnings-once',
+        type=str,
+        choices=['True', 'False', 'None'],
+        default='True',
+        help='True: show warning once, False: for all, None: suppress warnings'
+    )
+    args = parser.parse_args()
+    params.scen_index = args.scen_index
+    params.scenario_fname = args.scenario_fname
 
+    def str_to_bool_none(val):
+        return {'True': True, 'False': False, 'None': None}[val]
+
+    # Determine warning level
+    show_warnings_once = str_to_bool_none(args.show_warnings_once)
+
+    print("\n\n")
+    print("======================================New Experiment========================================")
+    log(f'Start experiment with suite_id: {args.suite_id}')
+    platform = Platform('CALCULON')
     # If you don't have Eradication, un-comment out the following to download Eradication
     # import emod_malaria.bootstrap as dtk
     # import pathlib
@@ -104,4 +61,12 @@ if __name__ == "__main__":
     # dtk.setup(pathlib.Path(manifest.eradication_path).parent)
     # os.chdir(os.path.dirname(__file__))
     # print("...done.")
-    run_experiment(show_warnings_once=True)
+    run_experiment(
+        platform=platform,
+        params=params,
+        manifest=manifest,
+        print_params_fn=_print_params,
+        suite_id=args.suite_id,
+        tracking_file = tracking_file,
+        show_warnings_once=show_warnings_once
+    )

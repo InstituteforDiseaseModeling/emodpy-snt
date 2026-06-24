@@ -128,11 +128,10 @@ def get_spline_values4(hfca, project_path):
     hdf = habitat_scales(project_path)
 
     df = pd.DataFrame({'Name': ['MonthVal%d' % x for x in range(1, 13)],
-                       'Guess': [0.0075] * 12,
+                       'Guess': [0.01] * 12,
                        'Min': [0.00001] * 12,
-                       'Max': [0.1] * 12})  # !0.01
-
-    df = pd.concat([df, pd.DataFrame({'Name': ['MaxHab'], 'Guess': [10], 'Min': [8], 'Max': [12.5]})])
+                       'Max': [1] * 12})  # !0.01
+    df = pd.concat([df, pd.DataFrame({'Name': ['MaxHab'], 'Guess': [11], 'Min': [8], 'Max': [12.2]})])
     df['Dynamic'] = True
 
     a = hdf.at[hfca, 'arabiensis_scale_factor']
@@ -152,13 +151,37 @@ def get_spline_values4_constantMaxHab(hfca, project_path):
     hdf = habitat_scales(project_path)
 
     df = pd.DataFrame({'Name': ['MonthVal%d' % x for x in range(1, 13)],
-                       'Guess': [0.0075] * 12,
+                       'Guess': [0.01] * 12,
                        'Min': [0.00001] * 12,
                        'Max': [1] * 12})  # !0.01
     df['Dynamic'] = True
 
     df = pd.concat(
-        [df, pd.DataFrame({'Name': ['MaxHab'], 'Guess': [10], 'Min': [10], 'Max': [10], 'Dynamic': [False]})])
+        [df, pd.DataFrame({'Name': ['MaxHab'], 'Guess': [12], 'Min': [12], 'Max': [12], 'Dynamic': [False]})])
+
+    a = hdf.at[hfca, 'arabiensis_scale_factor']
+    f = hdf.at[hfca, 'funestus_scale_factor']
+    g = hdf.at[hfca, 'gambiae_scale_factor']
+    tot = a + f + g
+    a /= tot
+    f /= tot
+    g /= tot
+    fraction = (max(0, a), max(0, f), max(0, g))
+
+    return df, fraction
+
+
+
+# fit values for max hab scalar, keeping monthly values constant
+def get_spline_values4_constantMonthly(hfca, project_path):
+    hdf = habitat_scales(project_path)
+
+    df = pd.DataFrame({'Name': ['MonthVal%d' % x for x in range(1, 13)],
+                       'Guess': [0.01] * 12,
+                       'Min': [0.01] * 12,
+                       'Max': [0.01] * 12})
+    df['Dynamic'] = False
+    df = pd.concat([df, pd.DataFrame({'Name': ['MaxHab'], 'Guess': [10], 'Min': [8], 'Max': [12.2], 'Dynamic': [True]})])
 
     a = hdf.at[hfca, 'arabiensis_scale_factor']
     f = hdf.at[hfca, 'funestus_scale_factor']
@@ -233,6 +256,41 @@ def update_starting_spline_values_constantMaxHab(spline, round1_best_df):
 
     return spline
 
+
+# use the parameter values with the highest likelihood from a previous iteration as the starting point
+def update_starting_spline_values_constantMonthly(spline, round1_best_df):
+    spline.loc[spline['Name'] == 'MaxHab', 'Guess'] = round1_best_df.MaxHab[0]
+
+    for month_num in range(1, 13):
+        val_name = 'MonthVal%d' % month_num
+        spline.loc[spline['Name'] == val_name, 'Guess'] = round1_best_df.loc[0, val_name]
+        spline.loc[spline['Name'] == val_name, 'Min'] = round1_best_df.loc[0, val_name] * 0.98
+        spline.loc[spline['Name'] == val_name, 'Max'] = round1_best_df.loc[0, val_name] * 1.02
+
+    return spline
+
+
+def set_starting_spline_values_from_file(spline, initial_month_values, rep_admin):
+    cur_month_values = initial_month_values[initial_month_values['archetype'] == rep_admin]
+    for month_num in range(1, 13):
+        val_name = 'MonthVal%d' % month_num
+        spline.loc[spline['Name'] == val_name, 'Guess'] = cur_month_values.loc[0, val_name]
+
+    return spline
+
+
+
+def set_starting_spline_values_from_file_constantMonthly(spline, initial_month_values, rep_admin):
+    cur_month_values = initial_month_values[initial_month_values['archetype'] == rep_admin]
+    for month_num in range(1, 13):
+        val_name = 'MonthVal%d' % month_num
+        spline.loc[spline['Name'] == val_name, 'Guess'] = cur_month_values.iloc[0][val_name]
+        spline.loc[spline['Name'] == val_name, 'Min'] = cur_month_values.iloc[0][val_name] * 0.98
+        spline.loc[spline['Name'] == val_name, 'Max'] = cur_month_values.iloc[0][val_name] * 1.02
+
+    spline.loc[spline['Name'] == 'MaxHab', 'Guess'] = cur_month_values.iloc[0]['MaxHab']
+
+    return spline
 
 def get_cases(hfca, project_path):
     reference_fname = os.path.join(project_path, 'simulation_inputs', 'incidence', 'archetype_incidence.csv')

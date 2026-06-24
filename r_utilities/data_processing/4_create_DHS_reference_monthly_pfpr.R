@@ -2,7 +2,16 @@
 
 
 # create data frame with a row entry for each admin-month-year present in the DHS dataset, giving the total number tested and the number microscopy positive
-create_DHS_reference_monthly_pfpr = function(hbhi_dir, dta_dir, admin_shape, ds_pop_df_filename, pfpr_dhs_ref_years=c(2012, 2016), min_num_total=30){
+create_DHS_reference_monthly_pfpr = function(hbhi_dir, dta_dir, admin_shape, ds_pop_df_filename, pfpr_dhs_ref_years=c(2012, 2016), min_num_total=30, pfpr_measure='mic'){
+  if(pfpr_measure=='mic'){
+    pfpr_measure_name = 'microscopy'
+  }else if(pfpr_measure=='rdt'){
+    pfpr_measure_name = 'RDT'
+  }else{
+    warning('Name of PfPR metric not recognized. Assuming microscopy.')
+    pfpr_measure='mic'
+    pfpr_measure_name = 'microscopy'
+  }
   
   for (yy in 1:length(pfpr_dhs_ref_years)){
     year = pfpr_dhs_ref_years[yy]
@@ -12,7 +21,7 @@ create_DHS_reference_monthly_pfpr = function(hbhi_dir, dta_dir, admin_shape, ds_
     locations = data.frame(clusterid = locations_shp$DHSCLUST, latitude=locations_shp$LATNUM, longitude=locations_shp$LONGNUM)
     MIS_outputs = locations
     
-    var_index = which(DHS_file_recode_df$variable == 'mic')
+    var_index = which(DHS_file_recode_df$variable == pfpr_measure)
     if(!is.na(DHS_file_recode_df$filename[var_index])){
       cur_dta = read.dta(paste0(dta_dir, '/', DHS_file_recode_df$folder_dir[var_index], '/', DHS_file_recode_df$filename[var_index]))
       
@@ -53,7 +62,7 @@ create_DHS_reference_monthly_pfpr = function(hbhi_dir, dta_dir, admin_shape, ds_
       } else{
         ds_pfpr_all_years = rbind(ds_pfpr_all_years, as.data.frame(MIS_shape))
       }
-    }else warning(paste0('filename not specified for microscpy year ', pfpr_dhs_ref_years[yy]))
+    }else warning(paste0('filename not specified for ', pfpr_measure_name, ' year ', pfpr_dhs_ref_years[yy]))
   }
   ds_pfpr_all_years = ds_pfpr_all_years[!is.na(ds_pfpr_all_years$admin_name),]
   
@@ -88,7 +97,7 @@ create_DHS_reference_monthly_pfpr = function(hbhi_dir, dta_dir, admin_shape, ds_
   
   admin_pfpr_sums = ds_pfpr_all_years_agg_expanded
   admin_pfpr_sums$data_spatial_level = 'admin'
-  write.csv(as.data.frame(admin_pfpr_sums), paste0(hbhi_dir, '/estimates_from_DHS/DHS_monthly_microscopy_adminLevelDataOnly.csv'), row.names=FALSE)
+  write.csv(as.data.frame(admin_pfpr_sums), paste0(hbhi_dir, '/estimates_from_DHS/DHS_monthly_', pfpr_measure_name, '_adminLevelDataOnly.csv'), row.names=FALSE)
   
   #  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
   # when the number surveyed in a admin is lower than the threshold, use the region value instead
@@ -110,7 +119,7 @@ create_DHS_reference_monthly_pfpr = function(hbhi_dir, dta_dir, admin_shape, ds_
     summarise(total_positive = sum(num_pos),
               total_tested = sum(num_tested))
   # hist(agg_to_region$total_tested, breaks=60)
-  if(any(agg_to_region$total_tested < min_num_total)) warning('Some regions do not have the minimum number of required U5 tested with microscopy, need to modify code to aggregate further.')
+  if(any(agg_to_region$total_tested < min_num_total)) warning('Some regions do not have the minimum number of required U5 tested with ', pfpr_measure_name,', need to modify code to aggregate further.')
   
   admin_pfpr_sums_adjMin = admin_pfpr_sums
   # if the total number of U5s surveyed across all months/years/clusters is less than the threshold min_num_total, replace the admin-level data with the aggregated state-level data instead
@@ -132,7 +141,7 @@ create_DHS_reference_monthly_pfpr = function(hbhi_dir, dta_dir, admin_shape, ds_
     }
   }   
   admin_pfpr_sums_adjMin = admin_pfpr_sums_adjMin[(admin_pfpr_sums_adjMin$num_tested>0) & !is.na(admin_pfpr_sums_adjMin$year),]
-  write.csv(as.data.frame(admin_pfpr_sums_adjMin), paste0(hbhi_dir, '/estimates_from_DHS/DHS_admin_monthly_microscopy.csv'), row.names=FALSE)
+  write.csv(as.data.frame(admin_pfpr_sums_adjMin), paste0(hbhi_dir, '/estimates_from_DHS/DHS_admin_monthly_',pfpr_measure_name,'.csv'), row.names=FALSE)
 }
 
 # # plot distribution of aggregated prevalences across LGAs

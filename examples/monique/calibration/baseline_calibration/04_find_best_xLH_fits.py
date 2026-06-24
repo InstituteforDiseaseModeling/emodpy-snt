@@ -12,9 +12,10 @@ from snt.load_paths import load_box_paths
 mpl.rcParams['pdf.fonttype'] = 42
 
 # Specify data location
-USER_PATH = None
-USER_PATH = r"..\data"
-_, project_path = load_box_paths(user_path=USER_PATH, country_name='Example')
+
+# USER_PATH = r"..\data"
+# _, project_path = load_box_paths(user_path=USER_PATH, country_name='Example')
+_, project_path = load_box_paths(country_name='Example')
 
 
 def load_ref_data():
@@ -214,7 +215,7 @@ def save_plots(working_dir, fig, name):
 if __name__ == "__main__":
 
     expt_name = 'baseline_calibration'
-    working_dir = os.path.join(project_path, 'simulation_output', 'calibration', expt_name)
+    working_dir = os.path.join(project_path, 'simulation_output', 'baseline_calibration', expt_name)
     if not os.path.exists(os.path.join(working_dir, 'LL_allxLH_each_admin_run')):
         os.mkdir(os.path.join(working_dir, 'LL_allxLH_each_admin_run'))
 
@@ -224,4 +225,4 @@ if __name__ == "__main__":
     all_df = pd.read_csv(os.path.join(working_dir, 'monthly_U5_PfPR.csv'))
 
     save_best_hab(all_df, working_dir, habitats_fname, create_plot=False)
-    # plot_outputs_separate(all_df, working_dir)
+    plot_outputs_separate(all_df, working_dir)

@@ -1,6 +1,6 @@
 # plot_map_intervention_coverage_input.R
 
-library(rgdal)
+# library(rgdal)
 library(raster)
 library(ggplot2)
 library(gridExtra)
@@ -19,9 +19,9 @@ library(prettyGraphs)
 user = Sys.getenv("USERNAME")
 user_path = file.path("C:/Users",user)
 
-country = 'BDI'  #'SLE'  # 'BDI'
-dta_dir = 'C:/Users/moniqueam/Dropbox (IDM)/Malaria Team Folder/data'
-script_dir = 'C:/Users/moniqueam/Documents/malaria-snt-core'
+country = 'NGA'  #'SLE'  # 'BDI'
+dta_dir = 'C:/Users/moniqueam/IDM Dropbox/Malaria Team Folder/data'
+script_dir = 'C:/Users/moniqueam/Documents/emodpy-snt/r_utilities'
 
 
 if(country =='BDI'){
@@ -29,9 +29,12 @@ if(country =='BDI'){
   admin_shapefile_filepath = (paste0(hbhi_dir, '/SpatialClustering/reference_rasters_shapefiles/bdi_adm2.shp'))
   data_dir = 'C:/Users/mambrose/Dropbox (IDM)/Malaria Team Folder/data/Burundi'
 } else if(country=='NGA'){
-  base_filepath = paste0(user_path, '/Dropbox (IDM)/NU_collaboration')
-  hbhi_dir = paste0(user_path, '/Dropbox (IDM)/NU_collaboration/hbhi_nigeria/snt_2022')
-  admin_shapefile_filepath = (paste0(base_filepath, '/hbhi_nigeria/SpatialClustering/reference_rasters_shapefiles/NGA_DS_clusteringProjection.shp'))
+  hbhi_dir = 'C:/Users/moniqueam/IDM Dropbox/Malaria Team Folder/projects/snt/Nigeria/snt_2023'
+  admin_shapefile_filepath = paste0(hbhi_dir, '/SpatialClustering/reference_rasters_shapefiles/NGA_DS_clusteringProjection.shp')
+  
+  # base_filepath = paste0(user_path, '/IDM Dropbox/NU_collaboration')
+  # hbhi_dir = paste0(user_path, '/IDM Dropbox/Monique Ambrose/NU_collaboration/hbhi_nigeria/snt_2022')
+  # admin_shapefile_filepath = (paste0(base_filepath, '/hbhi_nigeria/SpatialClustering/reference_rasters_shapefiles/NGA_DS_clusteringProjection.shp'))
 }
 
 
@@ -41,8 +44,8 @@ admin_shapefile = st_read(admin_shapefile_filepath)
 
 base_sim_input_dir = paste0(hbhi_dir, '/simulation_inputs')
 intervention_coordinator = read.csv(paste0(base_sim_input_dir, '/_intervention_file_references/Interventions_to_present.csv'))
-intervention_coordinator = read.csv(paste0(base_sim_input_dir, '/_intervention_file_references/Interventions_for_projections.csv'))
-scenario_row = 2
+# intervention_coordinator = read.csv(paste0(base_sim_input_dir, '/_intervention_file_references/Interventions_for_projections.csv'))
+scenario_row = 1  #5
 if(scenario_row>nrow(intervention_coordinator)) scenario_row = nrow(intervention_coordinator)
 
 source(paste0(script_dir,'/standardize_admin_names.R'))
@@ -244,7 +247,7 @@ if(file.exists(intervention_filename)){
   inter_input = read.csv(intervention_filename)
   if('seed' %in% colnames(inter_input)) inter_input = inter_input[inter_input$seed == 1,]
   inter_years = sort(unique(inter_input$year))
-  inter_years = inter_years[seq(1,length(inter_years), by=2)]
+  inter_years = inter_years[seq(2,length(inter_years), by=2)]
   create_coverage_input_maps(inter_input=inter_input, inter_years=inter_years, output_filename=output_filename, colorscale=colorscale, min_value=min_value, max_value=max_value, num_colors=num_colors)
 }
 

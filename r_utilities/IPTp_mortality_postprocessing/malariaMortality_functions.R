@@ -5,8 +5,8 @@ library(data.table)
 # read in simulation output and calculate updated numbers from multiple sources of mortality
 
 adjust_sim_output_mortality = function(cfr_severe_treated = 0.097,  # case fatality rate for severe, treated cases
-                                       cfr_severe_untreated_1 = 0.539,  # case fatality rate for severe, treated cases (upper estimate)
-                                       cfr_severe_untreated_2 = 0.177,  # case fatality rate for severe, treated cases (lower estimate)
+                                       cfr_severe_untreated_1 = 0.539,  # case fatality rate for severe, untreated cases (upper estimate)
+                                       cfr_severe_untreated_2 = 0.177,  # case fatality rate for severe, untreated cases (lower estimate)
                                        starting_prob_1 = 0.037,  # (QD from Ross et al, upper value)
                                        starting_prob_2 = 0.01,  # (QD from Ross et al, lower value)
                                        age_shape_param = 0.117,  # (aF* from Ross et al)

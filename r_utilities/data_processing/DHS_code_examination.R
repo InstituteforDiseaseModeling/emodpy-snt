@@ -3,49 +3,112 @@
 library(foreign)
 library(haven)
 library(dplyr)
-library(rgdal)
+# library(rgdal)
 library(raster)
 library(sp)
 
+library(readr)
 
 
 
 country = 'NGA'  #'SLE'  # 'BDI'
-year_index = 4
+year_index = 6
 
 if(country =='NGA'){
-  base_filepath = 'C:/Users/moniqueam/Dropbox (IDM)/NU_collaboration'
-  base_hbhi_filepath = paste0(base_filepath, '/hbhi_nigeria')
-  
-  dta_dir = paste0(base_filepath, '/nigeria_dhs/data_analysis/data/DHS/Downloads')
-  # read in shapefile with admin boundaries
-  shapefile_filepath = paste0(base_hbhi_filepath, '/SpatialClustering/reference_rasters_shapefiles/NGA_DS_clusteringProjection.shp')
-  admin_shape = shapefile(shapefile_filepath)
-  dhs_years = c(2010, 2013, 2015, 2018, 2021)
-  dhs_year_dirs = c('NG_2010_MIS_06192019', 'NG_2013_DHS_06192019', 'NG_2015_MIS_06192019', 'NG_2018_DHS_11072019_1720_86355', 'NG_2021_MIS_12062022_90_72922')
-  cur_year = dhs_years[year_index]
-  cur_year_dir = dhs_year_dirs[year_index]
-  
-  # get shapefile and cluster locations for survey year
-  shapefile_candidates = list.files(path=paste0(dta_dir, '/', cur_year_dir), pattern="*.shp", full.names=TRUE, recursive=TRUE)
-  shapefile_candidates = shapefile_candidates[substr(shapefile_candidates, nchar(shapefile_candidates)-3+1, nchar(shapefile_candidates)) == 'shp']
-  if(length(shapefile_candidates) != 1){
-    warning(paste0(length(shapefile_candidates),  ' potential cluster-location shapefiles identified for DHS year ', cur_year, '. User needs to select which is appropriate. Currently using first file'))
-    shapefile_candidates = shapefile_candidates[1]
-  } 
-  locations_shp = shapefile(shapefile_candidates)
-  locations = data.frame(clusterid = locations_shp$DHSCLUST, latitude=locations_shp$LATNUM, longitude=locations_shp$LONGNUM)
-  
-  # get list of relevant dta files
-  dta_filepaths = list.files(path=paste0(dta_dir, '/', cur_year_dir), pattern="*.DTA", full.names=TRUE, recursive=TRUE)
-  dta_filepaths = dta_filepaths[substr(dta_filepaths, nchar(dta_filepaths)-3+1, nchar(dta_filepaths)) == 'DTA']
-  dta_list = list()
-  for(dd in 1:length(dta_filepaths)){
-    dta_cur = read.dta(dta_filepaths[dd])
-    dta_list[[dd]] = dta_cur
+  user = Sys.getenv("USERNAME")
+  user_dir = file.path("C:/Users",user)
+  base_filepath = paste0(user_dir, '/Gates Foundation Dropbox/Malaria Team Folder/data/Nigeria/Nigeria_SNT_shared_data')
+  # base_filepath = 'C:/Users/moniqueam/Dropbox (IDM)/NU_collaboration'
+  # base_hbhi_filepath = paste0(base_filepath, '/hbhi_nigeria')
+  if(year_index <=6){
+    dta_dir = paste0(base_filepath, '/nigeria_dhs/data_analysis/data/DHS/Downloads')
+    dhs_years = c(2010, 2013, 2015, 2018, 2021 ,2024)
+    dhs_year_dirs = c('NG_2010_MIS_06192019', 'NG_2013_DHS_06192019', 'NG_2015_MIS_06192019', 'NG_2018_DHS_11072019_1720_86355', 'NG_2021_MIS_12062022_90_72922', 'NG_2024_DHS_10212025_158_158063')
+    cur_year = dhs_years[year_index]
+    cur_year_dir = dhs_year_dirs[year_index]
+    
+    # get list of relevant dta files
+    dta_filepaths = list.files(path=paste0(dta_dir, '/', cur_year_dir), pattern="\\.(DTA|dta)$", full.names=TRUE, recursive=TRUE)
+    dta_filepaths = dta_filepaths[substr(dta_filepaths, nchar(dta_filepaths)-3+1, nchar(dta_filepaths)) %in% c('DTA', 'dta')]
+    dta_list = list()
+    for(dd in 1:length(dta_filepaths)){
+      dta_cur = read.dta(dta_filepaths[dd])
+      dta_list[[dd]] = dta_cur
+    }
+  } else{ # 2025 MIS
+    dta_dir = paste0(user_dir, '/OneDrive - Bill & Melinda Gates Foundation/Data/Nigeria/snt_2026/MIS_2025')  # moved DHS data to OneDrive
+    dhs_years = 2025
+    
+    # functions for reading data files
+    parse_sps_layout <- function(sps_path) {
+      lines <- readLines(sps_path, warn = FALSE)
+      
+      # Isolate the variable definition block between "/" and "."
+      slash_line <- grep("^\\s*/$", lines)[1]
+      dot_line   <- grep("^\\s*\\.$", lines)[1]
+      
+      if (is.na(slash_line) || is.na(dot_line))
+        stop("Could not find DATA LIST block (/ ... .) in: ", basename(sps_path))
+      
+      block <- lines[(slash_line + 1):(dot_line - 1)]
+      
+      rows <- lapply(block, function(ln) {
+        m <- regexec("(\\w+)\\s+(\\d+)-(\\d+)", ln)
+        parts <- regmatches(ln, m)[[1]]
+        if (length(parts) == 0) return(NULL)
+        data.frame(
+          Name   = parts[2],
+          Start  = as.integer(parts[3]),
+          End    = as.integer(parts[4]),
+          IsChar = grepl("\\(A\\)", ln),
+          stringsAsFactors = FALSE
+        )
+      })
+      
+      layout <- do.call(rbind, Filter(Negate(is.null), rows))
+      layout[order(layout$Start), ]
+    }
+    
+    read_dat_sps <- function(dat_path, sps_path = NULL) {
+      if (is.null(sps_path))
+        sps_path <- sub("(?i)\\.[^.]+$", ".SPS", dat_path, perl = TRUE)
+      if (!file.exists(sps_path))
+        stop("SPS file not found: ", sps_path)
+      
+      layout <- parse_sps_layout(sps_path)
+      
+      df <- readr::read_fwf(
+        dat_path,
+        col_positions  = readr::fwf_positions(
+          start     = layout$Start,
+          end       = layout$End,
+          col_names = layout$Name
+        ),
+        col_types      = readr::cols(.default = readr::col_character()),
+        show_col_types = FALSE,
+        progress       = FALSE
+      )
+      
+      as.data.frame(dplyr::mutate(df, dplyr::across(where(is.character), trimws)))
+    }
+    
+    
+    # get list of relevant dat files
+    dta_filepaths = list.files(path=paste0(dta_dir, '/ExportedData'), pattern="\\.(DAT|dat)$", full.names=TRUE, recursive=TRUE)
+    dta_filepaths = dta_filepaths[substr(dta_filepaths, nchar(dta_filepaths)-3+1, nchar(dta_filepaths)) %in% c('DAT', 'dat')]
+    dta_list = list()
+    for(dd in 1:length(dta_filepaths)){
+      dta_cur = read_dat_sps(dta_filepaths[dd])
+      dta_list[[dd]] = dta_cur
+    }
+    # dta_list_exported = dta_list
+    # dta_filepaths_exported = dta_filepaths
+    
+    # # check with RawFile
+    # dd = 1
+    # dta_cur = read_cspr(paste0(dta_dir, '/RawFile/NGIQ89A.dat'), dcf_path = paste0(dta_dir,"/RawFile/NGIQ82.dcf"))
+    # dta_list[[dd]] = dta_cur
   }
-  
-  
 }
 
 
@@ -101,8 +164,8 @@ art_codes = c("ml13e", "ml13aa", "ml13ab")
 non_art_codes = c("ml13a", "ml13b", "ml13c", "ml13d", "ml13da", "ml13h") # country-specific antimalarial: "ml13g", "ml13f", 
 
 # household codes 
-house_codes = c('hhid','hvidx','hv001','hv006','hv007','hv105','hml20','hml32','hml32a')
-house_filenum = 5 # 2010:5, 2013:7, 2015:5, 2018:8, 2021: 5
+house_codes = c('hhid','hvidx','hv001','hv006','hv007', 'hv024','hv105','hml20','hml32','hml32a')
+house_filenum = 7 # 2010:5, 2013:7, 2015:5, 2018:8, 2021: 5, 2024: 7
 dta_filepaths[house_filenum]
 View(dta_list[[house_filenum]][1:50,house_codes[house_codes %in% colnames(dta_list[[house_filenum]])]])
 for(ii in 6:length(house_codes)){
@@ -114,7 +177,7 @@ for(ii in 6:length(house_codes)){
 
 # individual codes
 ind_codes = c('caseid','bidx','v001','v012','v014','v006','v007','v105', 'hw16', 'h32z','h47','m49a', 'ml1', 'h3', 'h5', 'h7', 'h9', art_codes, non_art_codes)
-ind_filenum = 1 # 2010:1, 2013:1, 2015:4, 2018:1, 2021: 5
+ind_filenum = 5 # 2010:1, 2013:1, 2015:4, 2018:1, 2021: 5
 dta_filepaths[ind_filenum]
 View(dta_list[[ind_filenum]][1:50,ind_codes[ind_codes %in% colnames(dta_list[[ind_filenum]])]])
 for(ii in 6:length(ind_codes)){
@@ -127,13 +190,30 @@ for(ii in 6:length(ind_codes)){
 
 
 
-dta_filepaths[4]
+# vaccine with birth dates
+ind_codes = c('caseid','bidx','v001','v012','v014','v006','v007','v105', 'hw16', 'h32z','h47','m49a', 'ml1', 'b1','b2','b3', 'h3', 'h5', 'h7', 'h9')
+ind_filenum = 1 # 2010:1, 2013:1, 2015:4, 2018:1, 2021: 5
+dta_filepaths[ind_filenum]
+View(dta_list[[ind_filenum]][1:50,ind_codes[ind_codes %in% colnames(dta_list[[ind_filenum]])]])
+
+
+# # quick check of 2025 MIS codes
+# ind_codes = c('QHCLUST','QHNUMBER','QHLGOVAREA','QHLOCALITY','QHREGION','QH01','QH07','ML07I','ML07F','GHINTRO', 'GHLATPOLE', 'GHLATITUDE', 'GHLONGITUDE','QB114', 'QB112A', 'QB113','QB113B', 'QHLGOVAN','QH121','QH129','QH129A','QH129B','QH129C','QH129D','QH129E','Q404','Q405','Q406','Q407','Q408','Q412','Q413')
+# View(distinct(dta_list[[5]][,which(colnames(dta_list[[5]]) %in% ind_codes)]))
+# View(distinct(dta_list[[4]][,which(colnames(dta_list[[4]]) %in% ind_codes)]))
+# View(distinct(dta_list[[1]][,which(colnames(dta_list[[1]]) %in% ind_codes)]))
+
+
+dta_filepaths[7]
 ########################
 # PfPR (microscopy)
 ########################
 find_code_locations(dta_list=dta_list, code_str='hml32')
 find_code_locations(dta_list=dta_list, code_str='hml33')
 find_code_locations(dta_list=dta_list, code_str='hml35')
+find_code_locations(dta_list=dta_list, code_str='HML35')
+find_code_locations(dta_list=dta_list, code_str='QB114')
+find_code_locations(dta_list=dta_list, code_str='QB112')
 
 
 ########################
@@ -149,11 +229,28 @@ find_code_locations(dta_list=dta_list, code_str='hv006')
 # possible_code_strs = c('hml20','hml19','s508', '460','461')
 find_code_locations(dta_list=dta_list, code_str='hml20')
 find_code_locations(dta_list=dta_list, code_str='hml19')
+find_code_locations(dta_list=dta_list, code_str='QH06')
+
+
+########################
+# source of ITNs
+########################
+# possible_code_strs = c('hml20','hml19','s508', '460','461')
+find_code_locations(dta_list=dta_list, code_str='hml22')
+find_code_locations(dta_list=dta_list, code_str='hml23')
+
+
 
 ######################
 # treatment-seeking
 #####################
-find_code_locations(dta_list=dta_list, code_str='h32z')
+find_code_locations(dta_list=dta_list, code_str='h32z')  # CM
+find_code_locations(dta_list=dta_list, code_str='h32y')  # received_treatment
+
+######################
+# where received treatment
+#####################
+find_code_locations(dta_list=dta_list, code_str='h32')  # CM
 
 ############################################
 # receive heel prick given seek treatment
@@ -167,8 +264,9 @@ find_code_locations(dta_list=dta_list, code_str='h37e')  # combination with arte
 find_code_locations(dta_list=dta_list, code_str='ml13e')  # combination with artemisinin
 find_code_locations(dta_list=dta_list, code_str='ml20a')  # how long after fever started did first take ACT
 # # view all the artesunate versus non-ACT antimalarials
-# art_codes = c("ml13e", "ml13aa", "ml13ab")
+# art_codes = c("ml13e", "ml13aa", "ml13ab")  # 'ml13aa' is rectal artesunate, moving to non-ACT
 # non_art_codes = c("ml13a", "ml13b", "ml13c", "ml13d", "ml13da", "ml13h")  #, "ml13g", "ml13f") # country-specific antimalarial: "ml13g", "ml13f", 
+find_code_locations(dta_list=dta_list, code_str='ml13aa')  # rectal artesunate
 
 
 
@@ -705,76 +803,76 @@ table(dta_2$iptp_num_doses)
 
 
 
-##################################################################################
-# determine which clusters are in which chiefdoms
-##################################################################################
-
-
-# turn MIS_2016 into spatial points data frame
-# not sure what the spatial projection is... will try with same spatial projection as shapefile
-points_crs = crs(admin_shape)
-MIS_2016_shape = SpatialPointsDataFrame(MIS_2016[,c('longitude', 'latitude')],
-                                        MIS_2016,
-                                        proj4string = points_crs)
-# find which chiefdom each cluster belongs to
-MIS_2016_locations = over(MIS_2016_shape, admin_shape)
-if(nrow(MIS_2016_locations) == nrow(MIS_2016_shape)){
-  MIS_2016_shape$NAME_3 = MIS_2016_locations$NAME_3
-  MIS_2016_shape$NAME_2 = MIS_2016_locations$NAME_2
-  MIS_2016_shape$NAME_1 = MIS_2016_locations$NAME_1
-}
-
-write.csv(as.data.frame(MIS_2016_shape), 'C:/Users/mambrose/Dropbox (IDM)/Malaria Team Folder/projects/SierraLeone_hbhi/explore_DHS/MIS_2016.csv')
-
-
-par(mfrow=c(3,4))
-# for each of the interventions/measures, count number of individuals surveyed in each chiefdom
-num_surveyed = as.data.frame(MIS_2016_shape[c('NAME_3','num_mic_test', 'num_use_itn_all', 'num_w_fever', 'num_preg')]) %>% 
-  group_by(NAME_3) %>%
-  summarise(num_mic_test=sum(num_mic_test, na.rm = TRUE),
-            num_use_itn_all=sum(num_use_itn_all, na.rm = TRUE),
-            num_w_fever=sum(num_w_fever, na.rm = TRUE),
-            num_preg=sum(num_preg, na.rm = TRUE))
-num_surveyed = num_surveyed[!is.na(num_surveyed[,1]),]
-hist(num_surveyed$num_mic_test,main='microscopy (PfPR)', breaks=seq(0,800, length.out=80))
-hist(num_surveyed$num_use_itn_all,  main='ITN', breaks=seq(0,1600, length.out=80))
-hist(num_surveyed$num_w_fever, main='fever (CM)', breaks=seq(0,200, length.out=80))
-hist(num_surveyed$num_preg, main='preganacies (IPTp)', breaks=seq(0,500, length.out=80))
-
-
-# look at survey numbers by district
-# for each of the interventions/measures, count number of individuals surveyed in each chiefdom
-num_surveyed = as.data.frame(MIS_2016_shape[c('NAME_2','num_mic_test', 'num_use_itn_all', 'num_w_fever', 'num_preg')]) %>% 
-  group_by(NAME_2) %>%
-  summarise(num_mic_test=sum(num_mic_test, na.rm = TRUE),
-            num_use_itn_all=sum(num_use_itn_all, na.rm = TRUE),
-            num_w_fever=sum(num_w_fever, na.rm = TRUE),
-            num_preg=sum(num_preg, na.rm = TRUE))
-num_surveyed = num_surveyed[!is.na(num_surveyed[,1]),]
-hist(num_surveyed$num_mic_test,main='microscopy (PfPR)', breaks=seq(0,800, length.out=80))
-hist(num_surveyed$num_use_itn_all,  main='ITN', breaks=seq(0,1600, length.out=80))
-hist(num_surveyed$num_w_fever, main='fever (CM)', breaks=seq(0,200, length.out=80))
-hist(num_surveyed$num_preg, main='preganacies (IPTp)', breaks=seq(0,500, length.out=80))
-
-# look at survey numbers by region
-# for each of the interventions/measures, count number of individuals surveyed in each chiefdom
-num_surveyed = as.data.frame(MIS_2016_shape[c('NAME_1','num_mic_test', 'num_use_itn_all', 'num_w_fever', 'num_preg')]) %>% 
-  group_by(NAME_1) %>%
-  summarise(num_mic_test=sum(num_mic_test, na.rm = TRUE),
-            num_use_itn_all=sum(num_use_itn_all, na.rm = TRUE),
-            num_w_fever=sum(num_w_fever, na.rm = TRUE),
-            num_preg=sum(num_preg, na.rm = TRUE))
-num_surveyed = num_surveyed[!is.na(num_surveyed[,1]),]
-hist(num_surveyed$num_mic_test,main='microscopy (PfPR)', breaks=seq(0,3000, length.out=80))
-hist(num_surveyed$num_use_itn_all,  main='ITN',breaks=seq(0,6000, length.out=80))
-hist(num_surveyed$num_w_fever, main='fever (CM)', breaks=seq(0,700, length.out=80))
-hist(num_surveyed$num_preg, main='preganacies (IPTp)', breaks=seq(0,2000, length.out=80))
-par(mfrow=c(1,1))
-
-
-
-
-# get weighted means and number tested/positive within each chiefdom for all variables
+# ##################################################################################
+# # determine which clusters are in which chiefdoms
+# ##################################################################################
+# 
+# 
+# # turn MIS_2016 into spatial points data frame
+# # not sure what the spatial projection is... will try with same spatial projection as shapefile
+# points_crs = crs(admin_shape)
+# MIS_2016_shape = SpatialPointsDataFrame(MIS_2016[,c('longitude', 'latitude')],
+#                                         MIS_2016,
+#                                         proj4string = points_crs)
+# # find which chiefdom each cluster belongs to
+# MIS_2016_locations = over(MIS_2016_shape, admin_shape)
+# if(nrow(MIS_2016_locations) == nrow(MIS_2016_shape)){
+#   MIS_2016_shape$NAME_3 = MIS_2016_locations$NAME_3
+#   MIS_2016_shape$NAME_2 = MIS_2016_locations$NAME_2
+#   MIS_2016_shape$NAME_1 = MIS_2016_locations$NAME_1
+# }
+# 
+# write.csv(as.data.frame(MIS_2016_shape), 'C:/Users/mambrose/Dropbox (IDM)/Malaria Team Folder/projects/SierraLeone_hbhi/explore_DHS/MIS_2016.csv')
+# 
+# 
+# par(mfrow=c(3,4))
+# # for each of the interventions/measures, count number of individuals surveyed in each chiefdom
+# num_surveyed = as.data.frame(MIS_2016_shape[c('NAME_3','num_mic_test', 'num_use_itn_all', 'num_w_fever', 'num_preg')]) %>% 
+#   group_by(NAME_3) %>%
+#   summarise(num_mic_test=sum(num_mic_test, na.rm = TRUE),
+#             num_use_itn_all=sum(num_use_itn_all, na.rm = TRUE),
+#             num_w_fever=sum(num_w_fever, na.rm = TRUE),
+#             num_preg=sum(num_preg, na.rm = TRUE))
+# num_surveyed = num_surveyed[!is.na(num_surveyed[,1]),]
+# hist(num_surveyed$num_mic_test,main='microscopy (PfPR)', breaks=seq(0,800, length.out=80))
+# hist(num_surveyed$num_use_itn_all,  main='ITN', breaks=seq(0,1600, length.out=80))
+# hist(num_surveyed$num_w_fever, main='fever (CM)', breaks=seq(0,200, length.out=80))
+# hist(num_surveyed$num_preg, main='preganacies (IPTp)', breaks=seq(0,500, length.out=80))
+# 
+# 
+# # look at survey numbers by district
+# # for each of the interventions/measures, count number of individuals surveyed in each chiefdom
+# num_surveyed = as.data.frame(MIS_2016_shape[c('NAME_2','num_mic_test', 'num_use_itn_all', 'num_w_fever', 'num_preg')]) %>% 
+#   group_by(NAME_2) %>%
+#   summarise(num_mic_test=sum(num_mic_test, na.rm = TRUE),
+#             num_use_itn_all=sum(num_use_itn_all, na.rm = TRUE),
+#             num_w_fever=sum(num_w_fever, na.rm = TRUE),
+#             num_preg=sum(num_preg, na.rm = TRUE))
+# num_surveyed = num_surveyed[!is.na(num_surveyed[,1]),]
+# hist(num_surveyed$num_mic_test,main='microscopy (PfPR)', breaks=seq(0,800, length.out=80))
+# hist(num_surveyed$num_use_itn_all,  main='ITN', breaks=seq(0,1600, length.out=80))
+# hist(num_surveyed$num_w_fever, main='fever (CM)', breaks=seq(0,200, length.out=80))
+# hist(num_surveyed$num_preg, main='preganacies (IPTp)', breaks=seq(0,500, length.out=80))
+# 
+# # look at survey numbers by region
+# # for each of the interventions/measures, count number of individuals surveyed in each chiefdom
+# num_surveyed = as.data.frame(MIS_2016_shape[c('NAME_1','num_mic_test', 'num_use_itn_all', 'num_w_fever', 'num_preg')]) %>% 
+#   group_by(NAME_1) %>%
+#   summarise(num_mic_test=sum(num_mic_test, na.rm = TRUE),
+#             num_use_itn_all=sum(num_use_itn_all, na.rm = TRUE),
+#             num_w_fever=sum(num_w_fever, na.rm = TRUE),
+#             num_preg=sum(num_preg, na.rm = TRUE))
+# num_surveyed = num_surveyed[!is.na(num_surveyed[,1]),]
+# hist(num_surveyed$num_mic_test,main='microscopy (PfPR)', breaks=seq(0,3000, length.out=80))
+# hist(num_surveyed$num_use_itn_all,  main='ITN',breaks=seq(0,6000, length.out=80))
+# hist(num_surveyed$num_w_fever, main='fever (CM)', breaks=seq(0,700, length.out=80))
+# hist(num_surveyed$num_preg, main='preganacies (IPTp)', breaks=seq(0,2000, length.out=80))
+# par(mfrow=c(1,1))
+# 
+# 
+# 
+# 
+# # get weighted means and number tested/positive within each chiefdom for all variables
 
 
 

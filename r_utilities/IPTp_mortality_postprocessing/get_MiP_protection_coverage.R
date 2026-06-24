@@ -5,6 +5,87 @@
 
 
 
+#' New-style IPTp input loader
+#'
+#' Reads the two long-format CSVs produced by future_projection_intervention_
+#' inputs_NMSP_coverage.R (future scenarios) and 0_main_DHS_data_to_sim_inputs.R
+#' (to-present scenarios). The coordinator CSV stores a single basename
+#' ('IPTp_filename'); the doses CSV is found by appending '_doses' to that
+#' basename, matching the pairing convention used everywhere else in the
+#' pipeline. Returns the data in the shape the downstream postprocessing
+#' expects, so the call site can be a near drop-in replacement for
+#' get_IPTp_coverages().
+#'
+#' @param iptp_filepath full path to the coverage CSV ('admin_name', 'year',
+#'                      'coverage' columns; long format)
+#' @param iptp_doses_filepath full path to the dose-distribution CSV
+#'                      ('year', 'doses_1', 'doses_2', 'doses_3' columns)
+#' @param first_year first simulation year
+#' @param last_year last simulation year
+#' @param admin_subset optional vector of admin_names to restrict the coverage
+#'                      frame to (used when sims were run on a subset of LGAs)
+#'
+#' @return list with:
+#'   coverage  -- data frame: admin_name, year, coverage  (long)
+#'   doses     -- data frame: year, doses_1, doses_2, doses_3
+load_iptp_inputs = function(iptp_filepath, iptp_doses_filepath,
+                             first_year, last_year, admin_subset = NULL) {
+  if (!file.exists(iptp_filepath))
+    stop("IPTp coverage file not found: ", iptp_filepath)
+  if (!file.exists(iptp_doses_filepath))
+    stop("IPTp doses file not found: ", iptp_doses_filepath)
+
+  cov   = read.csv(iptp_filepath,        as.is = TRUE)
+  doses = read.csv(iptp_doses_filepath,  as.is = TRUE)
+
+  # Normalise admin names (replace '/' with '-', matching what the legacy
+  # get_IPTp_coverages did).
+  if ('admin_name' %in% colnames(cov)) {
+    cov$admin_name = gsub('/', '-', cov$admin_name)
+  }
+  if (!is.null(admin_subset)) {
+    admin_subset = gsub('/', '-', admin_subset)
+    cov = cov[cov$admin_name %in% admin_subset, , drop = FALSE]
+  }
+
+  # Filter to the simulation window.
+  cov   = cov[cov$year   >= first_year & cov$year   <= last_year, , drop = FALSE]
+  doses = doses[doses$year >= first_year & doses$year <= last_year, , drop = FALSE]
+
+  # Basic sanity checks.
+  required_cov = c('admin_name', 'year', 'coverage')
+  missing_cov  = setdiff(required_cov, colnames(cov))
+  if (length(missing_cov) > 0)
+    stop("IPTp coverage file ", basename(iptp_filepath),
+         " is missing required column(s): ",
+         paste(missing_cov, collapse = ', '))
+
+  required_doses = c('year', 'doses_1', 'doses_2', 'doses_3')
+  missing_doses  = setdiff(required_doses, colnames(doses))
+  if (length(missing_doses) > 0)
+    stop("IPTp doses file ", basename(iptp_doses_filepath),
+         " is missing required column(s): ",
+         paste(missing_doses, collapse = ', '))
+
+  dose_sums = doses$doses_1 + doses$doses_2 + doses$doses_3
+  if (any(abs(dose_sums - 1) > 1e-3, na.rm = TRUE))
+    warning("IPTp doses file ", basename(iptp_doses_filepath),
+            ": doses_1 + doses_2 + doses_3 != 1 for some year(s). Max abs diff = ",
+            signif(max(abs(dose_sums - 1), na.rm = TRUE), 3))
+
+  list(coverage = cov, doses = doses)
+}
+
+#' Derive the doses-file path from the coverage-file path by appending '_doses'
+#' before the '.csv' extension. Mirrors the convention enforced by the
+#' generator scripts: the coordinator stores only the coverage basename.
+iptp_doses_path_from_coverage_path = function(iptp_filepath) {
+  sub("\\.csv$", "_doses.csv", iptp_filepath)
+}
+
+
+
+
 get_IPTp_coverages = function(iptp_estimates_filename, iptp_dose_number_filename, future_projection_flag, first_year, last_year, coverage_string, iptp_estimates_ci_l_filename=NA, iptp_estimates_ci_u_filename=NA, iptp_project_trajectory_filename=NA,
                               admin_subset_flag=FALSE, admin_subset=NA){
   #'  set IPTp coverage (and number of doses) through time for a particular scenario. Uses information on whether simulation 
@@ -56,7 +137,7 @@ get_IPTp_coverages = function(iptp_estimates_filename, iptp_dose_number_filename
   ## - - - - - - - - - - - - - - - - - - - - ##
   
   if (!future_projection_flag){
-    if(coverage_string == 'noCoverage'){
+    if(coverage_string %in% c('noCoverage', 'none')){
       project_coverage = rep(0, length(iptp_coverage_df[,dim(iptp_coverage_df)[2]]))
       project_dose_number = iptp_dose_number[,dim(iptp_dose_number)[2]]
       
@@ -89,14 +170,37 @@ get_IPTp_coverages = function(iptp_estimates_filename, iptp_dose_number_filename
       iptp_relative_risk = iptp_relative_risk_estimateBetterProtection
       
     } else if(coverage_string != 'curCoverage') warning('coverage string not recognized for historical simulations... assuming estimated true coverage')
+    
+    # make sure that values are included for all years
+    if (first_year < min(as.numeric(gsub('X','', colnames(iptp_coverage_df)[-1])))){
+      warning('The first year of the IPTp coverage dataframe is after the first year of the simulation. Need to add more IPTp data/assumptions.')
+    }
+    if(last_year > max(as.numeric(gsub('X','', colnames(iptp_coverage_df)[-1])))){
+      warning('The simulation continues for more years than supplied in the IPTp coverage dataframe. Assuming continuation of lastest coverage. To use a different assumption, need to update IPTp input file.')
+      # use coverage from latest year for projections
+      project_coverage = iptp_coverage_df[,dim(iptp_coverage_df)[2]]
+      project_dose_number = iptp_dose_number[,dim(iptp_dose_number)[2]]
       
+      for(yy in (max(as.numeric(gsub('X','', colnames(iptp_coverage_df)[-1])))+1):last_year){
+        # update iptp coverage (>=1 dose)
+        new_coverage_df = data.frame(project_coverage)
+        colnames(new_coverage_df) = yy
+        iptp_coverage_df = cbind(iptp_coverage_df, new_coverage_df)
+        
+        # update iptp doses (of covered individuals, how many doses received?)
+        new_dose_df = data.frame(project_dose_number)
+        colnames(new_dose_df) = yy
+        iptp_dose_number = cbind(iptp_dose_number, new_dose_df)
+      }
+    }
+    
   ## - - - - - - - - - - - - - - - - - - - - ##
   # simulations of future transmission
   ## - - - - - - - - - - - - - - - - - - - - ##
   } else{
     constant_future_values = TRUE
     # replace entries with projection scenario
-    if(coverage_string == 'noCoverage'){
+    if(coverage_string %in% c('noCoverage', 'none')){
       project_coverage = rep(0, length(iptp_coverage_df[,dim(iptp_coverage_df)[2]]))
       project_dose_number = iptp_dose_number[,dim(iptp_dose_number)[2]]
       iptp_coverage_df = data.frame('admin_name' = admin_names)
@@ -159,9 +263,21 @@ get_IPTp_coverages = function(iptp_estimates_filename, iptp_dose_number_filename
       # also increase probability of getting 3 IPTp doses (given >=1 dose) 30% and split remaining probability evenly between 1 and 2 doses
       new_three_dose_fraction = min(1,iptp_dose_number[3,dim(iptp_dose_number)[2]] + 0.3)
       project_dose_number = c((1-new_three_dose_fraction)/2, (1-new_three_dose_fraction)/2, new_three_dose_fraction)
+    } else if(coverage_string =='increase_to_50'){
+      # increase probability of getting at least one IPTp up to 50%, unless already over 50%
+      project_coverage =  sapply(iptp_coverage_df[,dim(iptp_coverage_df)[2]], max, 0.5)
+      # also increase probability of getting 3 IPTp doses (given >=1 dose) 20% and split remaining probability evenly between 1 and 2 doses
+      new_three_dose_fraction = min(1,iptp_dose_number[3,dim(iptp_dose_number)[2]] + 0.2)
+      project_dose_number = c((1-new_three_dose_fraction)/2, (1-new_three_dose_fraction)/2, new_three_dose_fraction)
     } else if(coverage_string =='increase_to_60'){
       # increase probability of getting at least one IPTp up to 60%, unless already over 60%
       project_coverage =  sapply(iptp_coverage_df[,dim(iptp_coverage_df)[2]], max, 0.6)
+      # also increase probability of getting 3 IPTp doses (given >=1 dose) 20% and split remaining probability evenly between 1 and 2 doses
+      new_three_dose_fraction = min(1,iptp_dose_number[3,dim(iptp_dose_number)[2]] + 0.2)
+      project_dose_number = c((1-new_three_dose_fraction)/2, (1-new_three_dose_fraction)/2, new_three_dose_fraction)
+    } else if(coverage_string =='increase_to_70'){
+      # increase probability of getting at least one IPTp up to 70%, unless already over 70%
+      project_coverage =  sapply(iptp_coverage_df[,dim(iptp_coverage_df)[2]], max, 0.7)
       # also increase probability of getting 3 IPTp doses (given >=1 dose) 20% and split remaining probability evenly between 1 and 2 doses
       new_three_dose_fraction = min(1,iptp_dose_number[3,dim(iptp_dose_number)[2]] + 0.2)
       project_dose_number = c((1-new_three_dose_fraction)/2, (1-new_three_dose_fraction)/2, new_three_dose_fraction)
@@ -381,12 +497,72 @@ get_IPTp_coverages = function(iptp_estimates_filename, iptp_dose_number_filename
       # remove first column
       iptp_dose_number = iptp_dose_number[,-1]
       
+    } else if (coverage_string == 'stopAfterOneYear'){
+      # keep current values for 1 year, then discontinue
+      constant_future_values = FALSE
+      
+      # use coverage from latest year for first year of projections
+      num_years_cur_coverage = 1
+      project_coverage = iptp_coverage_df[,dim(iptp_coverage_df)[2]]
+      project_0_coverage = rep(0, length(iptp_coverage_df[,dim(iptp_coverage_df)[2]]))
+      project_dose_number = iptp_dose_number[,dim(iptp_dose_number)[2]]
+      iptp_coverage_df = data.frame('admin_name' = admin_names)
+      iptp_dose_number = data.frame('doses' = c(1,2,3))
+      for(yy in first_year:last_year){
+        if(yy < (first_year+num_years_cur_coverage)){
+          # update iptp coverage (>=1 dose)
+          new_coverage_df = data.frame(project_coverage)
+          colnames(new_coverage_df) = yy
+          iptp_coverage_df = cbind(iptp_coverage_df, new_coverage_df)
+        } else{
+          # update iptp coverage (>=1 dose)
+          new_coverage_df = data.frame(project_0_coverage)
+          colnames(new_coverage_df) = yy
+          iptp_coverage_df = cbind(iptp_coverage_df, new_coverage_df)        
+        }
+        # update iptp doses (of covered individuals, how many doses received?)
+        new_dose_df = data.frame(project_dose_number)
+        colnames(new_dose_df) = yy
+        iptp_dose_number = cbind(iptp_dose_number, new_dose_df)
+      }
+      # remove first column
+      iptp_dose_number = iptp_dose_number[,-1]
     } else if (coverage_string == 'stopAfterTwoYears'){
       # keep current values for 2 years, then discontinue
       constant_future_values = FALSE
       
       # use coverage from latest year for first two years of projections
       num_years_cur_coverage = 2
+      project_coverage = iptp_coverage_df[,dim(iptp_coverage_df)[2]]
+      project_0_coverage = rep(0, length(iptp_coverage_df[,dim(iptp_coverage_df)[2]]))
+      project_dose_number = iptp_dose_number[,dim(iptp_dose_number)[2]]
+      iptp_coverage_df = data.frame('admin_name' = admin_names)
+      iptp_dose_number = data.frame('doses' = c(1,2,3))
+      for(yy in first_year:last_year){
+        if(yy < (first_year+num_years_cur_coverage)){
+          # update iptp coverage (>=1 dose)
+          new_coverage_df = data.frame(project_coverage)
+          colnames(new_coverage_df) = yy
+          iptp_coverage_df = cbind(iptp_coverage_df, new_coverage_df)
+        } else{
+          # update iptp coverage (>=1 dose)
+          new_coverage_df = data.frame(project_0_coverage)
+          colnames(new_coverage_df) = yy
+          iptp_coverage_df = cbind(iptp_coverage_df, new_coverage_df)        
+        }
+        # update iptp doses (of covered individuals, how many doses received?)
+        new_dose_df = data.frame(project_dose_number)
+        colnames(new_dose_df) = yy
+        iptp_dose_number = cbind(iptp_dose_number, new_dose_df)
+      }
+      # remove first column
+      iptp_dose_number = iptp_dose_number[,-1]
+    } else if (coverage_string == 'stopAfterThreeYears'){
+      # keep current values for 2 years, then discontinue
+      constant_future_values = FALSE
+      
+      # use coverage from latest year for first two years of projections
+      num_years_cur_coverage = 3
       project_coverage = iptp_coverage_df[,dim(iptp_coverage_df)[2]]
       project_0_coverage = rep(0, length(iptp_coverage_df[,dim(iptp_coverage_df)[2]]))
       project_dose_number = iptp_dose_number[,dim(iptp_dose_number)[2]]
@@ -431,6 +607,9 @@ get_IPTp_coverages = function(iptp_estimates_filename, iptp_dose_number_filename
       iptp_dose_number = iptp_dose_number[,-1]
     }
   }
+  write.csv(iptp_coverage_df, gsub('estimated_past_IPTp_each_DS', paste0('sim_assumptions/IPTp_', coverage_string, '_',first_year, '_', last_year), iptp_estimates_filename))
+  write.csv(iptp_dose_number, gsub('estimated_past_IPTp_each_DS', paste0('sim_assumptions/IPTp_dose_', coverage_string, '_',first_year, '_', last_year), iptp_estimates_filename))
+  
   return(list(iptp_coverage_df, iptp_dose_number, admin_names))
 }
 

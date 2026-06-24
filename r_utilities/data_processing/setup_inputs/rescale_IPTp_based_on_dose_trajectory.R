@@ -79,24 +79,24 @@ rescale_IPTp_later_years = function(hbhi_dir, script_dir, ds_pop_df_filename, re
   #     --> N=X1/P1 --> P2=P1*X2/X1
   iptp_sampled_coverage = read.csv(iptp_input_filename)
   # check that the sampled coverage is the same after min(iptp_counts$year)
-  if(length(unique(iptp_sampled_coverage$IPTp_coverage[iptp_sampled_coverage$admin_name==iptp_sampled_coverage$admin_name[1] & iptp_sampled_coverage$year>=min(iptp_counts$year) & iptp_sampled_coverage$seed==1]))==1){
+  if(length(unique(iptp_sampled_coverage$coverage[iptp_sampled_coverage$admin_name==iptp_sampled_coverage$admin_name[1] & iptp_sampled_coverage$year>=min(iptp_counts$year) & iptp_sampled_coverage$seed==1]))==1){
     write.csv(iptp_sampled_coverage, gsub('.csv','_original.csv',iptp_input_filename), row.names=FALSE)
     
     # rescale future values
     iptp_sampled_coverage = merge(iptp_sampled_coverage, iptp_counts[,c('admin_name', 'year', 'coverage_multiplier')], all=TRUE)
     iptp_sampled_coverage$coverage_multiplier[iptp_sampled_coverage$year<min(iptp_counts$year)] = 1
     iptp_sampled_coverage_updated = iptp_sampled_coverage
-    iptp_sampled_coverage_updated$IPTp_coverage = iptp_sampled_coverage$IPTp_coverage * iptp_sampled_coverage$coverage_multiplier
+    iptp_sampled_coverage_updated$coverage = iptp_sampled_coverage$coverage * iptp_sampled_coverage$coverage_multiplier
     
     # set maximum realistic coverage
-    iptp_sampled_coverage_updated$IPTp_coverage = sapply(iptp_sampled_coverage_updated$IPTp_coverage, min, maximum_coverage_iptp)
+    iptp_sampled_coverage_updated$coverage = sapply(iptp_sampled_coverage_updated$coverage, min, maximum_coverage_iptp)
     
     # create plot of results
     if(!(dir.exists(file.path(hbhi_dir, 'simulation_inputs','IPTp')))) dir.creage(file.path(hbhi_dir, 'simulation_inputs','IPTp'))
-    gg=ggplot(iptp_sampled_coverage_updated[iptp_sampled_coverage_updated$seed==1,], aes(x=year, y=IPTp_coverage, col=admin_name))+
+    gg=ggplot(iptp_sampled_coverage_updated[iptp_sampled_coverage_updated$seed==1,], aes(x=year, y=coverage, col=admin_name))+
       geom_line()+
       theme(legend.position = 'none')
-    ggsave(file.path(hbhi_dir, 'simulation_inputs','IPTp','rescaled_IPTp_coverage_timeseries.png'),gg,width=4, height=3)
+    ggsave(file.path(hbhi_dir, 'simulation_inputs','IPTp','rescaled_coverage_timeseries.png'),gg,width=4, height=3)
     
     # add any extra years as repeat of the final year - NOT CURRENTLY INCLUDED - add error check instead
     if(max(iptp_counts$year)<max(iptp_sampled_coverage_updated$year)){
@@ -112,7 +112,7 @@ rescale_IPTp_later_years = function(hbhi_dir, script_dir, ds_pop_df_filename, re
 # ##### Previous work comparing the difference of using >=3 doses, 1-2 doses, or the mean of the two for hte trajectories
 # ##############################
 # # more recent data on number of nets distributed through each channel in each year (all year-channel combinations saved as different sheets in excel file)
-# new_iptp_1or2_filename = paste0(dta_dir, '/burundi/WHO/snt_2022/Données sur TPIg 1et2.xlsx')
+# new_iptp_1or2_filename = paste0(dta_dir, '/burundi/WHO/snt_2022/Donnï¿½es sur TPIg 1et2.xlsx')
 # # get the names of each sheet (the year).
 # sheet_names_a = excel_sheets(path=new_iptp_1or2_filename)
 # 
