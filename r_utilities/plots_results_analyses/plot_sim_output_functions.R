@@ -42,7 +42,9 @@ plot_relative_burden_barplots = function(sim_future_output_dir, pop_filepath, di
                                          barplot_start_year, barplot_end_year, 
                                          pyr, chw_cov,
                                          scenario_names, experiment_names, scenario_palette, LLIN2y_flag=FALSE, overwrite_files=FALSE, separate_plots_flag=FALSE, standard_max_y = 0.1, show_error_bar=TRUE, align_seeds=TRUE,
-                                         include_to_present=TRUE, burden_metric_subset=c()){
+                                         include_to_present=TRUE, burden_metric_subset=c(), scenario_barfill=NULL){
+  # scenario_barfill (optional named vector scenario -> ggpattern pattern, e.g. 'stripe'/'none') hatches
+  # selected bars; NULL = plain solid bars (default, so existing callers are unaffected).
   admin_pop = read.csv(pop_filepath)
   
   # burden metrics
@@ -83,10 +85,26 @@ plot_relative_burden_barplots = function(sim_future_output_dir, pop_filepath, di
   # get factors in the correct order (rather than alphabetical)
   relative_burden_all_df$scenario = factor(relative_burden_all_df$scenario, levels=scenario_names[comparison_start_index:length(scenario_names)])
   
+  # guard against non-finite % reductions: a near-zero reference makes (ref-comp)/ref blow up to
+  # +/-Inf, which (left unhandled) makes the y-limits non-finite and crashes axis-break computation
+  # (Error in seq.default: invalid '(to - from)/by'). Report which scenario x metric were affected
+  # (so the offending experiment / cumulativeBurden cache can be checked/deleted), then set them to NA.
+  for(cc in burden_colnames){
+    bad = !is.finite(relative_burden_all_df[[cc]])
+    if(any(bad)){
+      for(sc in unique(as.character(relative_burden_all_df$scenario[bad]))){
+        n = sum(bad & as.character(relative_burden_all_df$scenario) == sc)
+        message(sprintf('plot_relative_burden_barplots: %d non-finite %% reduction value(s) set to NA  [metric: %s | scenario: %s]', n, cc, sc))
+      }
+      relative_burden_all_df[[cc]][bad] = NA
+    }
+  }
   # get minimum and maximum reductions - these will be used if they are smaller / greater than the current min/max
   standard_min_y = 0
-  cur_min = min(relative_burden_all_df[,2:(1+length(burden_colnames))])
-  cur_max = max(relative_burden_all_df[,2:(1+length(burden_colnames))])
+  finite_vals = unlist(relative_burden_all_df[, burden_colnames, drop=FALSE], use.names=FALSE)
+  finite_vals = finite_vals[is.finite(finite_vals)]
+  cur_min = if(length(finite_vals)) min(finite_vals) else 0
+  cur_max = if(length(finite_vals)) max(finite_vals) else standard_max_y
   if(cur_min < standard_min_y) standard_min_y = cur_min
   if(cur_max > standard_max_y) standard_max_y = cur_max
   
@@ -98,20 +116,29 @@ plot_relative_burden_barplots = function(sim_future_output_dir, pop_filepath, di
     # get mean, min, and max among all runs for this burden metric
     rel_burden_agg = as.data.frame(relative_burden_all_df) %>% dplyr::select(match(select_col_names, names(.))) %>%
       dplyr::group_by(scenario) %>%
-      dplyr::summarise(mean_rel = mean(get(current_burden_name)),
-                       max_rel = max(get(current_burden_name)),
-                       min_rel = min(get(current_burden_name)))
-    
-    gg_list[[bb]] = ggplot(rel_burden_agg) + 
-      geom_bar(aes(x=scenario, y=mean_rel, fill=scenario), stat='identity') +
+      dplyr::summarise(mean_rel = mean(get(current_burden_name), na.rm=TRUE),
+                       max_rel = max(get(current_burden_name), na.rm=TRUE),
+                       min_rel = min(get(current_burden_name), na.rm=TRUE))
+
+    bar_layer = if(is.null(scenario_barfill)){
+      geom_bar(aes(x=scenario, y=mean_rel, fill=scenario), stat='identity')
+    } else {
+      ggpattern::geom_bar_pattern(aes(x=scenario, y=mean_rel, fill=scenario, pattern=scenario), stat='identity',
+                                  pattern_fill='white', pattern_colour=NA, pattern_angle=45,
+                                  pattern_density=0.3, pattern_spacing=0.03, pattern_key_scale_factor=0.5)
+    }
+    gg_list[[bb]] = ggplot(rel_burden_agg) +
+      bar_layer +
       scale_y_continuous(labels=percent_format(), limits=c(standard_min_y, standard_max_y)) +   # turn into percent reduction
-      ylab('Percent reduction') + 
+      ylab('Percent reduction') +
       geom_hline(yintercept=0, color='black') +
       ggtitle(gsub('\\(births\\)', '', burden_metric_name)) +
-      scale_fill_manual(values = scenario_palette) + 
+      scale_fill_manual(values = scenario_palette) +
+      (if(!is.null(scenario_barfill)) scale_pattern_manual(values=scenario_barfill)) +
+      (if(!is.null(scenario_barfill)) guides(pattern=guide_legend(override.aes=list(fill='white')), fill=guide_legend(override.aes=list(pattern='none')))) +
       # theme_classic()+
       theme_gridlines_no_box()+
-      theme(legend.position = "top", legend.box='horizontal', legend.title = element_blank(), text = element_text(size = text_size), legend.text=element_text(size = text_size), 
+      theme(legend.position = "top", legend.box='horizontal', legend.title = element_blank(), text = element_text(size = text_size), legend.text=element_text(size = text_size),
             axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(),axis.line.x=element_blank(),
             plot.margin=unit(c(0,1,1,0), 'cm'))
     if(show_error_bar){
@@ -136,13 +163,16 @@ plot_relative_burden_barplots = function(sim_future_output_dir, pop_filepath, di
   }
   
   if(save_plots){
-    gg_saved = grid.arrange(grobs = gg_list[-1], layout_matrix = matrix(c(1:(length(burden_colnames))), nrow=2, byrow=FALSE))
+    # arrangeGrob (not grid.arrange): build the grob WITHOUT drawing to the active device. grid.arrange
+    # draws immediately to the current device, and on some interactive devices ggpattern's crosshatch
+    # renderer crashes (Error in seq.default: invalid '(to - from)/by'); ggsave then draws to PNG safely.
+    gg_saved = arrangeGrob(grobs = gg_list[-1], layout_matrix = matrix(c(1:(length(burden_colnames))), nrow=2, byrow=FALSE))
     ggsave(paste0(sim_future_output_dir, '/_plots/barplot_percent_reduction_burden_', pyr, '_', chw_cov, 'CHW_',district_subset,'.png'), gg_saved, dpi=600, width=14, height=7, units='in')
   }
 
   # ----- combine all burden plots ----- #
   # gg = grid.arrange(grobs = gg_list, layout_matrix = matrix(c(1,1,2:(length(burden_colnames)+1)), ncol=2, byrow=TRUE))
-  gg = grid.arrange(grobs = gg_list, layout_matrix = rbind(matrix(rep(1, length(burden_colnames)/2), nrow=1), matrix(2:(length(burden_colnames)+1), nrow=2, byrow=FALSE)))
+  gg = arrangeGrob(grobs = gg_list, layout_matrix = rbind(matrix(rep(1, length(burden_colnames)/2), nrow=1), matrix(2:(length(burden_colnames)+1), nrow=2, byrow=FALSE)))  # arrangeGrob, not grid.arrange (see note above) -- caller ggsave's the returned grob
 
   return(gg)
 }
@@ -494,8 +524,9 @@ plot_relative_burden_barplots_by_state = function(sim_future_output_dir, pop_fil
                                                  barplot_start_year, barplot_end_year, 
                                                  pyr, chw_cov,
                                                  scenario_names, experiment_names, scenario_palette, LLIN2y_flag=FALSE, overwrite_files=FALSE, show_error_bar=TRUE, align_seeds=TRUE,
-                                                 burden_metric_subset=c(), include_to_present=TRUE, file_suffix=''){
-  
+                                                 burden_metric_subset=c(), include_to_present=TRUE, file_suffix='', scenario_barfill=NULL){
+  # scenario_barfill (optional named vector scenario -> ggpattern pattern, e.g. 'stripe'/'none') hatches
+  # selected bars; NULL = plain solid bars (default, so existing callers are unaffected).
   admin_pop = read.csv(pop_filepath)
   
   # burden metrics
@@ -535,15 +566,21 @@ plot_relative_burden_barplots_by_state = function(sim_future_output_dir, pop_fil
   
   # get factors in the correct order (rather than alphabetical)
   relative_burden_all_df$scenario = factor(relative_burden_all_df$scenario, levels=scenario_names[comparison_start_index:length(scenario_names)])
-  
-  # # get minimum and maximum reductions - these will be used if they are smaller / greater than the current min/max
-  # standard_min_y = 0
-  # standard_max_y = 0.1
-  # cur_min = min(relative_burden_all_df[,2:(1+length(burden_colnames))])
-  # cur_max = max(relative_burden_all_df[,2:(1+length(burden_colnames))])
-  # if(cur_min < standard_min_y) standard_min_y = cur_min
-  # if(cur_max > standard_max_y) standard_max_y = cur_max
-  
+
+  # guard against non-finite % reductions (near-zero reference -> (ref-comp)/ref = +/-Inf), which would
+  # otherwise crash axis-break computation (Error in seq.default). Report affected scenario x metric x
+  # state(s) (so the offending experiment / cumulativeBurden cache can be checked/deleted), then set to NA.
+  for(cc in burden_colnames){
+    bad = !is.finite(relative_burden_all_df[[cc]])
+    if(any(bad)){
+      for(sc in unique(as.character(relative_burden_all_df$scenario[bad]))){
+        sel = bad & as.character(relative_burden_all_df$scenario) == sc
+        sts = sort(unique(as.character(relative_burden_all_df$State[sel])))
+        message(sprintf('plot_relative_burden_barplots_by_state: %d non-finite %% reduction value(s) set to NA  [metric: %s | scenario: %s | state(s): %s]', sum(sel), cc, sc, paste(sts, collapse=', ')))
+      }
+      relative_burden_all_df[[cc]][bad] = NA
+    }
+  }
 
   for(bb in 1:length(burden_colnames)){
     current_burden_name = burden_colnames[bb]
@@ -552,24 +589,33 @@ plot_relative_burden_barplots_by_state = function(sim_future_output_dir, pop_fil
     # get mean, min, and max among all runs for this burden metric
     rel_burden_agg = as.data.frame(relative_burden_all_df) %>% dplyr::select(match(select_col_names, names(.))) %>%
       dplyr::group_by(scenario, State) %>%
-      dplyr::summarise(mean_rel = mean(get(current_burden_name)),
-                       max_rel = max(get(current_burden_name)),
-                       min_rel = min(get(current_burden_name)))
+      dplyr::summarise(mean_rel = mean(get(current_burden_name), na.rm=TRUE),
+                       max_rel = max(get(current_burden_name), na.rm=TRUE),
+                       min_rel = min(get(current_burden_name), na.rm=TRUE))
     
     rel_burden_agg$code = rel_burden_agg$State
-    gg = ggplot(rel_burden_agg) + 
-      geom_bar(aes(x=scenario, y=mean_rel, fill=scenario), stat='identity') +
+    bar_layer = if(is.null(scenario_barfill)){
+      geom_bar(aes(x=scenario, y=mean_rel, fill=scenario), stat='identity')
+    } else {
+      ggpattern::geom_bar_pattern(aes(x=scenario, y=mean_rel, fill=scenario, pattern=scenario), stat='identity',
+                                  pattern_fill='white', pattern_colour=NA, pattern_angle=45,
+                                  pattern_density=0.3, pattern_spacing=0.03, pattern_key_scale_factor=0.5)
+    }
+    gg = ggplot(rel_burden_agg) +
+      bar_layer +
       scale_y_continuous(labels=percent_format(), n.breaks=4) + #,limits=c(standard_min_y, standard_max_y)) +   # turn into percent reduction
-      # ylab('Percent reduction in burden \n ((Baseline - Plan) / Baseline) * 100') + 
-      ylab(paste0('Percent reduction in ', burden_metric_name)) + 
+      # ylab('Percent reduction in burden \n ((Baseline - Plan) / Baseline) * 100') +
+      ylab(paste0('Percent reduction in ', burden_metric_name)) +
       geom_hline(yintercept=0, color='black') +
       ggtitle(gsub('\\(births\\)', '', burden_metric_name)) +
-      scale_fill_manual(values = scenario_palette) + 
-      theme_classic()+ 
-      theme(legend.position = "top", legend.box='horizontal', legend.title = element_blank(), text = element_text(size = text_size), legend.text=element_text(size = text_size), 
+      scale_fill_manual(values = scenario_palette) +
+      (if(!is.null(scenario_barfill)) scale_pattern_manual(values=scenario_barfill)) +
+      (if(!is.null(scenario_barfill)) guides(pattern=guide_legend(override.aes=list(fill='white')), fill=guide_legend(override.aes=list(pattern='none')))) +
+      theme_classic()+
+      theme(legend.position = "top", legend.box='horizontal', legend.title = element_blank(), text = element_text(size = text_size), legend.text=element_text(size = text_size),
             axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(),axis.line.x=element_blank(),
-            plot.margin=unit(c(0,1,1,0), 'cm')) + 
-      facet_geo(~code, grid = grid_layout_state_locations, label="name") #, scales='free') 
+            plot.margin=unit(c(0,1,1,0), 'cm')) +
+      facet_geo(~code, grid = grid_layout_state_locations, label="name") #, scales='free')
     
     if(show_error_bar){
       gg = gg +
@@ -593,12 +639,24 @@ plot_relative_burden_barplots_by_state = function(sim_future_output_dir, pop_fil
 plot_relative_burden_grouped_barplots_by_state = function(sim_future_output_dir, pop_filepath, grid_layout_state_locations,
                                                           barplot_start_year, barplot_end_year,
                                                           pyr, chw_cov,
-                                                          scenario_names, experiment_names, scenario_palette,
+                                                          scenario_names, experiment_names, scenario_palette, group_col='State', group_levels=NULL,
                                                           LLIN2y_flag=FALSE, overwrite_files=FALSE, show_error_bar=TRUE, align_seeds=TRUE,
-                                                          burden_metric_subset=c(), include_to_present=TRUE, file_suffix='',
+                                                          burden_metric_subset=c(), include_to_present=TRUE, file_suffix='', scenario_barfill=NULL,
+                                                          diverging=FALSE, zone_pos_color='#2166AC', zone_neg_color='#B2182B', zone_alpha=0.09,
+                                                          zone_pos_label='lower malaria burden than current implementation',
+                                                          zone_neg_label='higher malaria burden than current implementation',
                                                           font_scale=1, legend_scale=0.6, save_width=18*.66, save_height=12*.77){
+  # scenario_barfill (optional named vector scenario -> ggpattern pattern, e.g. 'stripe'/'none') hatches
+  # selected bars; NULL = plain solid bars (default, so existing callers are unaffected).
+  # diverging=TRUE shades the panel background blue above 0 (lower burden than current implementation)
+  # and red below 0 (higher burden), and adds a caption stating the convention -- making negative
+  # 'burden averted' (i.e. worse than current implementation) immediately visible. Filenames get a
+  # '_diverging' tag so they don't overwrite the standard version.
   # font_scale multiplies all in-plot text; legend_scale shrinks the legend; save_width/save_height
   # set the saved PNG dimensions. Defaults preserve prior behaviour (except the smaller legend).
+  # group_col: column used to group/facet LGAs (default 'State' -> geofacet; any other value, e.g. 'Funder',
+  #   uses facet_wrap with fixed shared scales). PNG names use 'stateGrid' for State, '<group_col>Grid' otherwise.
+  grid_tag = if(group_col == 'State') 'stateGrid' else paste0(group_col, 'Grid')
   admin_pop = read.csv(pop_filepath)
 
   # burden metrics (same set as plot_relative_burden_barplots_by_state)
@@ -631,9 +689,9 @@ plot_relative_burden_grouped_barplots_by_state = function(sim_future_output_dir,
                                                       comparison_experiment_name=comparison_experiment_name,
                                                       comparison_scenario_name=comparison_scenario_name,
                                                       start_year=barplot_start_year, end_year=barplot_end_year,
-                                                      admin_pop=admin_pop, district_subset=district_subset, cur_admins=cur_admins,
+                                                      admin_pop=admin_pop, district_subset=district_subset, cur_admins=cur_admins, group_col=group_col,
                                                       LLIN2y_flag=LLIN2y_flag, overwrite_files=overwrite_files, align_seeds=align_seeds)
-    relative_burden_df = relative_burden_df[, which(colnames(relative_burden_df) %in% c('scenario', 'Run_Number', 'State', burden_colnames))]
+    relative_burden_df = relative_burden_df[, which(colnames(relative_burden_df) %in% c('scenario', 'Run_Number', group_col, burden_colnames))]
     if(nrow(relative_burden_all_df) == 0){
       relative_burden_all_df = relative_burden_df
     } else{
@@ -659,15 +717,16 @@ plot_relative_burden_grouped_barplots_by_state = function(sim_future_output_dir,
 
   # aggregate across runs: mean / min / max per scenario x State x metric x age group
   agg_df = long_df %>%
-    dplyr::group_by(scenario, State, age_group, metric_family) %>%
+    dplyr::group_by(scenario, across(all_of(group_col)), age_group, metric_family) %>%
     dplyr::summarise(mean_rel = mean(rel_reduction),
                      min_rel  = min(rel_reduction),
                      max_rel  = max(rel_reduction),
                      .groups = 'drop')
-  agg_df$code = agg_df$State
+  agg_df$code = agg_df[[group_col]]
+  if(!is.null(group_levels)) agg_df$code = factor(agg_df$code, levels=group_levels)  # custom facet order
 
   # subtitle text communicates which metric maps to which x-position
-  subtitle_text = paste0('Within each state (left -> right): ', paste(metric_family_levels, collapse = '  |  '))
+  subtitle_text = paste0('Within each ', tolower(group_col), ' (left -> right): ', paste(metric_family_levels, collapse = '  |  '))
 
   # one PNG per age group
   age_groups   = c('U5', 'all ages')
@@ -677,10 +736,26 @@ plot_relative_burden_grouped_barplots_by_state = function(sim_future_output_dir,
     cur_age = age_groups[aa]
     cur_df  = agg_df[agg_df$age_group == cur_age, ]
 
-    gg = ggplot(cur_df, aes(x=metric_family, y=mean_rel, fill=scenario)) +
-      geom_bar(stat='identity', position=position_dodge(width=0.55), width=0.5) +
+    gg = ggplot(cur_df, aes(x=metric_family, y=mean_rel, fill=scenario))
+    if(diverging){
+      # directional zone shading (behind bars): blue above 0 = lower burden, red below 0 = higher burden
+      gg = gg +
+        annotate('rect', xmin=-Inf, xmax=Inf, ymin=0,    ymax=Inf, fill=zone_pos_color, alpha=zone_alpha) +
+        annotate('rect', xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=0,   fill=zone_neg_color, alpha=zone_alpha)
+    }
+    bar_layer = if(is.null(scenario_barfill)){
+      geom_bar(stat='identity', position=position_dodge(width=0.55), width=0.5)
+    } else {
+      ggpattern::geom_bar_pattern(aes(pattern=scenario), stat='identity', position=position_dodge(width=0.55), width=0.5,
+                                  pattern_fill='white', pattern_colour=NA, pattern_angle=45,
+                                  pattern_density=0.3, pattern_spacing=0.03, pattern_key_scale_factor=0.5)
+    }
+    gg = gg +
+      bar_layer +
       scale_y_continuous(labels=percent_format(), n.breaks=4) +
       scale_fill_manual(values = scenario_palette) +
+      (if(!is.null(scenario_barfill)) scale_pattern_manual(values=scenario_barfill)) +
+      (if(!is.null(scenario_barfill)) guides(pattern=guide_legend(override.aes=list(fill='white')), fill=guide_legend(override.aes=list(pattern='none')))) +
       geom_hline(yintercept=0, color='black') +
       ylab('Percent reduction') +
       ggtitle(paste0('Percent reduction in burden (', age_titles[cur_age], ')'),
@@ -694,7 +769,14 @@ plot_relative_burden_grouped_barplots_by_state = function(sim_future_output_dir,
             axis.title.x=element_blank(),
             axis.text.x=element_text(angle=20, vjust=1, hjust=0.8),
             plot.margin=unit(c(0,1,1,0), 'cm')) +
-      facet_geo(~code, grid = grid_layout_state_locations, label='name')
+      (if(group_col == 'State') facet_geo(~code, grid = grid_layout_state_locations, label='name') else facet_wrap(~code))
+
+    if(diverging){
+      # caption states the higher-vs-lower-burden convention (zone labels in every facet would clutter)
+      gg = gg +
+        labs(caption = paste0('Blue (above 0): ', zone_pos_label, '.    Red (below 0): ', zone_neg_label, '.')) +
+        theme(plot.caption = element_text(hjust=0, size=text_size*0.75*font_scale))
+    }
 
     if(show_error_bar){
       gg = gg + geom_errorbar(aes(x=metric_family, ymin=min_rel, ymax=max_rel, group=scenario),
@@ -702,9 +784,130 @@ plot_relative_burden_grouped_barplots_by_state = function(sim_future_output_dir,
     }
 
     ggsave(paste0(sim_future_output_dir, '/_plots/barplot_percent_reduction_grouped_',
-                  age_filetags[cur_age], '_stateGrid', file_suffix, '.png'),
+                  age_filetags[cur_age], '_', grid_tag, if(diverging) '_diverging' else '', file_suffix, '.png'),
            gg, dpi=600, width=save_width, height=save_height, units='in')
   }
+  invisible(NULL)
+}
+
+
+
+
+####################################################################################
+# Across-funder comparison barplots WITHIN a scenario
+####################################################################################
+# For a single scenario (e.g. Scenario 1), compare % reduction in burden relative to current
+# implementation ACROSS groups: National (all LGAs) + each funder. Bars are COLOURED BY GROUP
+# (funder); the figure is a facet grid with burden metric across columns and age group down rows
+# (U5 top, all-ages bottom). Current vs PF target coverage are dodged bars, with current hatched
+# (coverage_barfill). One PNG per scenario.
+#   reference_experiment_name : current-implementation experiment (the comparison baseline)
+#   coverage_experiments      : named char vector, e.g. c(current='s1_curCov', target='s1_targetCov')
+#                               (drop an element to show only one coverage)
+#   funder_palette            : named colours for 'National' + each funder value
+#   group_levels              : x-axis order of groups (default: National first, then funders)
+plot_relative_burden_across_funders = function(sim_future_output_dir, pop_filepath,
+        reference_experiment_name, coverage_experiments, scenario_label,
+        barplot_start_year, barplot_end_year,
+        funder_palette, funder_col='Funder', group_levels=NULL,
+        burden_metric_subset=c('PfPR','incidence','allMortality'),
+        overwrite_files=FALSE, align_seeds=TRUE,
+        coverage_barfill=c(current='stripe', target='none'),
+        bar_width=0.6, national_width_factor=2,   # National bars drawn national_width_factor x wider (it spans all funders)
+        diverging=TRUE, zone_pos_color='#2166AC', zone_neg_color='#B2182B', zone_alpha=0.09,
+        zone_pos_label='lower malaria burden than current implementation',
+        zone_neg_label='higher malaria burden than current implementation',
+        file_suffix='', font_scale=1, legend_scale=0.6, save_width=10, save_height=7){
+
+  admin_pop = read.csv(pop_filepath)
+  admin_pop$National_group = 'National'   # constant column -> National aggregated like a funder group
+
+  # burden metric column -> family/age mapping (subset to requested metrics)
+  metric_map = data.frame(
+    col    = c('average_PfPR_U5','average_PfPR_all','incidence_U5','incidence_all','direct_death_rate_mean_U5','direct_death_rate_mean_all','all_death_rate_mean_U5','all_death_rate_mean_all'),
+    metric = c('PfPR','PfPR','incidence','incidence','directMortality','directMortality','allMortality','allMortality'),
+    family = c('PfPR','PfPR','incidence','incidence','mortality','mortality','mortality','mortality'),
+    age    = c('U5','all ages','U5','all ages','U5','all ages','U5','all ages'),
+    stringsAsFactors=FALSE)
+  metric_map = metric_map[metric_map$metric %in% burden_metric_subset, ]
+  metric_cols = metric_map$col
+
+  # assemble mean % reduction per group x coverage x metric (National + each funder, pop-weighted)
+  rows = data.frame()
+  for(cov in names(coverage_experiments)){
+    comp = coverage_experiments[[cov]]
+    for(gcol in c(funder_col, 'National_group')){
+      rb = get_relative_burden_by_state(sim_output_filepath=sim_future_output_dir, reference_experiment_name=reference_experiment_name,
+              comparison_experiment_name=comp, comparison_scenario_name=scenario_label,
+              start_year=barplot_start_year, end_year=barplot_end_year, admin_pop=admin_pop,
+              group_col=gcol, overwrite_files=overwrite_files, align_seeds=align_seeds)
+      m = aggregate(rb[, metric_cols, drop=FALSE], by=list(group=rb[[gcol]]), FUN=function(x) mean(x, na.rm=TRUE))
+      m$coverage = cov
+      rows = rbind(rows, m)
+    }
+  }
+
+  # long form + metric family/age labels
+  long = tidyr::pivot_longer(rows, cols=all_of(metric_cols), names_to='col', values_to='rel_reduction')
+  long = merge(long, metric_map[, c('col','family','age')], by='col')
+  long$family   = factor(long$family, levels=intersect(c('PfPR','incidence','mortality'), unique(metric_map$family)))
+  long$age      = factor(long$age, levels=c('U5','all ages'), labels=c('Under-5','All ages'))   # U5 top row, all-ages bottom
+  if(is.null(group_levels)) group_levels = c('National', setdiff(unique(rows$group), 'National'))
+  long$group    = factor(long$group, levels=group_levels)
+  long$coverage = factor(long$coverage, levels=intersect(c('current','target'), names(coverage_experiments)))
+
+  # numeric x-positions: each group center placed so edge-to-edge gap is equal for all adjacent pairs
+  nat_width  = bar_width * national_width_factor
+  grp_widths = ifelse(group_levels == 'National', nat_width, bar_width)
+  names(grp_widths) = group_levels
+  gap        = 1 - bar_width     # matches default funder-funder spacing from scale_x_discrete
+  x_centers  = numeric(length(group_levels))
+  names(x_centers) = group_levels
+  for(i in seq_along(group_levels)[-1])
+    x_centers[i] = x_centers[i-1] + grp_widths[i-1]/2 + gap + grp_widths[i]/2
+  long$x_pos = x_centers[as.character(long$group)]
+
+  has_neg = any(long$rel_reduction < 0, na.rm=TRUE)
+  gg = ggplot(long, aes(x=x_pos, y=rel_reduction, fill=group, pattern=coverage, group=coverage))
+  if(diverging && has_neg){
+    # no blue zone above 0; shade red below 0 ONLY when some bar is negative (worse than current implementation)
+    gg = gg +
+      annotate('rect', xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=0, fill=zone_neg_color, alpha=zone_alpha)
+  }
+  gg = gg +
+    # funder bars (standard width); National bars (wider) drawn as a second layer
+    ggpattern::geom_bar_pattern(data = function(d) d[d$group != 'National', ],
+                                stat='identity', position=position_dodge(width=bar_width), width=bar_width,
+                                pattern_fill='white', pattern_colour=NA, pattern_angle=45,
+                                pattern_density=0.3, pattern_spacing=0.03, pattern_key_scale_factor=0.5) +
+    ggpattern::geom_bar_pattern(data = function(d) d[d$group == 'National', ],
+                                stat='identity', position=position_dodge(width=nat_width), width=nat_width, show.legend=FALSE,
+                                pattern_fill='white', pattern_colour=NA, pattern_angle=45,
+                                pattern_density=0.3, pattern_spacing=0.03, pattern_key_scale_factor=0.5) +
+    scale_fill_manual(values=funder_palette) +
+    scale_pattern_manual(values=coverage_barfill,
+                         labels=c(current='current coverage', target='PF target coverage')) +
+    scale_x_continuous(breaks=x_centers, labels=names(x_centers)) +
+    guides(fill='none', pattern=guide_legend(title=NULL, override.aes=list(fill='grey70'))) +   # x-axis already labels the groups
+    scale_y_continuous(labels=percent_format(), n.breaks=4) +
+    geom_hline(yintercept=0, color='black') +
+    facet_grid(age ~ family) +                                                                       # rows = age (U5 top), cols = metric
+    ylab('Percent reduction') +
+    ggtitle(paste0('Burden averted by ', scenario_label, ' relative to continued current implementation')) +
+    theme_classic() +
+    theme(legend.position='top', legend.justification='right', legend.box='vertical',
+          text=element_text(size=text_size*font_scale),
+          legend.text=element_text(size=text_size*font_scale),
+          legend.key.size=unit(legend_scale*font_scale,'lines'),
+          axis.title.x=element_blank(), axis.text.x=element_text(angle=30, vjust=1, hjust=1),
+          plot.margin=unit(c(0,1,1,0),'cm'))
+  if(diverging && has_neg){
+    # caption only when the red zone is shown
+    gg = gg + labs(caption=paste0('Red (below 0): ', zone_neg_label, '.')) +
+      theme(plot.caption=element_text(hjust=0, size=text_size*0.75*font_scale))
+  }
+  ggsave(paste0(sim_future_output_dir, '/_plots/barplot_percent_reduction_acrossFunders_', gsub('[^A-Za-z0-9]+','',scenario_label), file_suffix, '.png'),
+         gg, dpi=600, width=save_width, height=save_height, units='in')
   invisible(NULL)
 }
 
@@ -1174,9 +1377,12 @@ plot_simulation_output_burden_all = function(sim_future_output_dir, pop_filepath
                                              scenario_filepaths, scenario_names, experiment_names, scenario_palette, LLIN2y_flag=FALSE, overwrite_files=FALSE, 
                                              separate_plots_flag=FALSE, extend_past_timeseries_year=NA, scenario_linetypes=NA, plot_CI=TRUE, include_U1=FALSE,
                                              burden_metric_subset=c(), ymax_each_burden=NA,
-                                             font_scale=1, legend_scale=0.6){
+                                             font_scale=1, legend_scale=0.6, display_xlim=NULL){
   # font_scale multiplies all in-plot text; legend_scale shrinks the legend. Defaults preserve
   # prior sizing except the now-smaller legend. (ggsave dims are set at the call site.)
+  # display_xlim: optional c(lo, hi) to CROP the x-axis view (annual plots only) without dropping data
+  #   -- e.g. display_xlim=c(2026, 2028.2) zooms to mid-2028 while keeping the 2028->2029 line segment.
+  #   Keep max_year at the data's last year (e.g. 2029) so that segment exists to be cropped.
   if (!is.na(relative_year)){ if(relative_year<min_year){
     warning('specified minimum year must be <= relative year. Setting min_year to relative_year.')
     min_year = relative_year
@@ -1385,11 +1591,11 @@ plot_simulation_output_burden_all = function(sim_future_output_dir, pop_filepath
         geom_line(linewidth=1) + 
         scale_linetype_manual(values=rev(scenario_linetypes)) +
         scale_color_manual(values = rev(scenario_palette)) + 
-        xlab('year') + 
-        ylab(paste0(gsub('\\(births\\)', '', burden_metric_name), ylab_add_component)) + 
-        xlim(min_year, max_year) + 
-        scale_x_continuous(breaks= pretty_breaks()) +
-        coord_cartesian(ylim=c(0, ylim_max)) +
+        xlab('year') +
+        ylab(paste0(gsub('\\(births\\)', '', burden_metric_name), ylab_add_component)) +
+        scale_x_continuous(breaks = function(b){ br <- scales::breaks_extended()(b); ib <- br[br == floor(br)]; if(length(ib)) ib else seq(floor(b[1]), ceiling(b[2])) }) +   # whole years only, but spaced adaptively (every 1/2/5/... yr) so long series don't crowd; avoids pretty_breaks()'s 2026.5 half-years
+        coord_cartesian(xlim=if(is.null(display_xlim)) c(min_year, max_year) else display_xlim, ylim=c(0, ylim_max)) +   # x-range via coord (display_xlim crops the view without dropping data); using xlim() + scale_x_continuous() together triggered 'Scale for x already present'
+
         theme_classic()+ 
         theme(legend.position = "top", legend.box='horizontal', legend.title = element_blank(), text=element_text(size = text_size*font_scale), legend.text=element_text(size = text_size*legend_scale*font_scale), legend.key.size=unit(legend_scale*font_scale, 'lines'))
     }
@@ -1436,11 +1642,13 @@ plot_simulation_output_burden_all = function(sim_future_output_dir, pop_filepath
 
 plot_simulation_output_burden_by_state = function(sim_future_output_dir, pop_filepath, grid_layout_state_locations,
                                              min_year, max_year, sim_end_years, relative_year=NA,
-                                             scenario_filepaths, scenario_names, experiment_names, scenario_palette, LLIN2y_flag=FALSE, overwrite_files=FALSE, 
+                                             scenario_filepaths, scenario_names, experiment_names, scenario_palette, group_col='State', group_levels=NULL, LLIN2y_flag=FALSE, overwrite_files=FALSE,
                                              extend_past_timeseries_year=NA, scenario_linetypes=NA,filename_suffix='',
                                              font_scale=1, legend_scale=0.6, save_width=12*0.9, save_height=8.5*0.9){
   # font_scale multiplies all in-plot text; legend_scale shrinks the legend; save_width/save_height
   # set the saved PNG size. Defaults preserve prior behaviour (except the smaller legend).
+  # group_col: column used to group/facet LGAs (default 'State' -> geofacet via grid_layout_state_locations;
+  #   any other value, e.g. 'Funder', uses facet_wrap with fixed shared scales). Filenames use tolower(group_col).
   if (!is.na(relative_year)){
     if(relative_year<min_year){
       warning('specified minimum year must be <= relative year. Setting min_year to relative_year.')
@@ -1458,14 +1666,14 @@ plot_simulation_output_burden_by_state = function(sim_future_output_dir, pop_fil
   for(ee in 1:length(scenario_filepaths)){
     exp_filepath = scenario_filepaths[ee]
     exp_name = scenario_names[ee]
-    cur_sim_output_agg = get_burden_timeseries_by_state(exp_filepath=exp_filepath, exp_name=exp_name, pop_filepath=pop_filepath, overwrite_files=overwrite_files)
+    cur_sim_output_agg = get_burden_timeseries_by_state(exp_filepath=exp_filepath, exp_name=exp_name, pop_filepath=pop_filepath, group_col=group_col, overwrite_files=overwrite_files)
     if(nrow(burden_df_all)==0){
       burden_df_all = cur_sim_output_agg
     } else{
       burden_df_all = rbind(burden_df_all, cur_sim_output_agg)
     }
   }
-  
+
   # subset to relevant scenarios currently being compared
   burden_df_all = burden_df_all[burden_df_all$scenario %in% scenario_names,]
 
@@ -1476,7 +1684,7 @@ plot_simulation_output_burden_by_state = function(sim_future_output_dir, pop_fil
   for(bb in 1:length(burden_metrics)){
     burden_metric = burden_metrics[bb]
     burden_metric_name = burden_metric_names[bb]
-    burden_df = burden_df_all[,c('State','year', 'scenario', burden_metric)]
+    burden_df = burden_df_all[,c(group_col,'year', 'scenario', burden_metric)]
     burden_df$mean_burden = burden_df[[burden_metric]]
 
     # connect the 'to-present' and 'future-projection' simulations in the plot. Two alternatives for how this is done, controlled by extend_past_timeseries:
@@ -1502,11 +1710,11 @@ plot_simulation_output_burden_by_state = function(sim_future_output_dir, pop_fil
       # if the reference year is not in the to-present simulation, use average value across scenarios and check that all scenarios have similar values for the reference year (if they do not, send a warning)
       if(('to-present' %in% burden_df$scenario) & (relative_year %in% unique(burden_df$year[burden_df$scenario=='to-present']))){
         # get the burden in the reference year
-        reference_burden_cur = burden_df[burden_df$scenario=='to-present' & burden_df$year == relative_year, c('State','mean_burden')]
+        reference_burden_cur = burden_df[burden_df$scenario=='to-present' & burden_df$year == relative_year, c(group_col,'mean_burden')]
       } else{
         similarity_threshold = 0.1
-        all_ref_year_burdens = burden_df[burden_df$year == relative_year, c('State','mean_burden')]
-        reference_burden_cur = all_ref_year_burdens %>% group_by(State) %>%
+        all_ref_year_burdens = burden_df[burden_df$year == relative_year, c(group_col,'mean_burden')]
+        reference_burden_cur = all_ref_year_burdens %>% group_by(across(all_of(group_col))) %>%
           summarise(mean_burden = mean(mean_burden)) %>% ungroup()
         # if(any(all_ref_year_burdens>(reference_burden_cur*(1+similarity_threshold))) | any(all_ref_year_burdens<(reference_burden_cur*(1-similarity_threshold)))){
         #   warning(paste0('in the reference year, some scenarios have different burdens for ',burden_metric_name))
@@ -1537,7 +1745,8 @@ plot_simulation_output_burden_by_state = function(sim_future_output_dir, pop_fil
       names(scenario_linetypes) = unique(burden_df$scenario)
     }
 
-    burden_df$code = burden_df$State
+    burden_df$code = burden_df[[group_col]]
+    if(!is.null(group_levels)) burden_df$code = factor(burden_df$code, levels=group_levels)  # custom facet order
     gg = ggplot(burden_df, aes(x=year, y=mean_burden, color=scenario, linetype=scenario))+
       geom_line(linewidth=1) + 
       scale_linetype_manual(values=scenario_linetypes) +
@@ -1552,9 +1761,9 @@ plot_simulation_output_burden_by_state = function(sim_future_output_dir, pop_fil
       scale_y_continuous(n.breaks= 3, labels = if(grepl('PfPR', burden_metric)) percent_format(accuracy = 1) else waiver()) +
       theme_bw()+
       theme(legend.position = "top", legend.box='horizontal', legend.title = element_blank(), text=element_text(size = text_size*font_scale), legend.text=element_text(size = text_size*legend_scale*font_scale), legend.key.size=unit(legend_scale*font_scale, 'lines')) +
-      facet_geo(~code, grid = grid_layout_state_locations, label="name")#, scales='free')
+      (if(group_col == 'State') facet_geo(~code, grid = grid_layout_state_locations, label="name") else facet_wrap(~code))#, scales='free')
 
-      ggsave(paste0(sim_future_output_dir, '/_plots/Timeseries_burden',relative_string,'_state_grid_',burden_metric,filename_suffix,'.png'), gg, dpi=600, width=save_width, height=save_height, units='in')
+      ggsave(paste0(sim_future_output_dir, '/_plots/Timeseries_burden',relative_string,'_',tolower(group_col),'_grid_',burden_metric,filename_suffix,'.png'), gg, dpi=600, width=save_width, height=save_height, units='in')
   }
   return(gg)
 }

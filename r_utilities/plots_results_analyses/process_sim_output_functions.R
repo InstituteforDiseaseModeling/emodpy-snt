@@ -337,7 +337,10 @@ get_cumulative_burden = function(sim_output_filepath, experiment_name, start_yea
 
 
 # total over a time period for each state
-get_cumulative_burden_by_state = function(sim_output_filepath, experiment_name, start_year, end_year, admin_pop, LLIN2y_flag=FALSE, overwrite_files=FALSE, mean_across_seeds=FALSE){
+get_cumulative_burden_by_state = function(sim_output_filepath, experiment_name, start_year, end_year, admin_pop, group_col='State', LLIN2y_flag=FALSE, overwrite_files=FALSE, mean_across_seeds=FALSE){
+  #'  @param group_col column in admin_pop used to group LGAs (default 'State'). Set to 'Funder' (or any
+  #'        admin-level column present in admin_pop) to aggregate by that grouping instead. Population
+  #'        weighting is unaffected: rates are Sum(rate*pop)/Sum(pop) over the LGAs within each group.
   #'  @description get cumulative U5 and all-age burden over specified years in each state (for all malaria metrics, separate values for each seed)
   #'  @return save and return data frame where each row is a seed x state and each column is the total over all included years of different burden metrics:
   #'      sum of:
@@ -358,7 +361,7 @@ get_cumulative_burden_by_state = function(sim_output_filepath, experiment_name, 
   #'         - stillbirths
   
   
-  output_filename = paste0(sim_output_filepath, '/', experiment_name, '/cumulativeBurden_', start_year, '_', end_year, '_byState.csv')
+  output_filename = paste0(sim_output_filepath, '/', experiment_name, '/cumulativeBurden_', start_year, '_', end_year, '_by', group_col, '.csv')
   if(file.exists(output_filename) & !overwrite_files){
     df_aggregated = read.csv(output_filename)
   }else{
@@ -389,7 +392,7 @@ get_cumulative_burden_by_state = function(sim_output_filepath, experiment_name, 
     df$all_deaths_1_U5 = df$total_mortality_U5_1 * df$pop_size_U5 / df$Pop_U5
     df$all_deaths_2_U5 = df$total_mortality_U5_2 * df$pop_size_U5 / df$Pop_U5
     
-    df_aggregated = df %>% group_by(Run_Number, State) %>%
+    df_aggregated = df %>% group_by(Run_Number, across(all_of(group_col))) %>%
       dplyr::summarize(pop_all_sum = sum(pop_size),
                        pop_U5_sum = sum(pop_size_U5),
                        cases_all_sum = sum(cases_all_ages),
@@ -436,7 +439,7 @@ get_cumulative_burden_by_state = function(sim_output_filepath, experiment_name, 
     df_aggregated$annual_num_mStill = (df_aggregated$mStill_sum / (end_year - start_year + 1))
     
     
-    df_aggregated = df_aggregated[,which(colnames(df_aggregated) %in% c('State','Run_Number','cases_all_sum','cases_U5_sum','severe_all_sum','severe_U5_sum', 
+    df_aggregated = df_aggregated[,which(colnames(df_aggregated) %in% c(group_col,'Run_Number','cases_all_sum','cases_U5_sum','severe_all_sum','severe_U5_sum',
                                                                         'mLBW_sum', 'mStill_sum', 'incidence_all', 'incidence_U5', 'severe_incidence_all', 'severe_incidence_U5', 'average_PfPR_all','average_PfPR_U5',  'annual_num_mLBW', 'annual_num_mStill', 
                                                                         'direct_deaths_1_all_sum', 'direct_deaths_2_all_sum', 'direct_deaths_1_U5_sum', 'direct_deaths_2_U5_sum',
                                                                         'all_deaths_1_all_sum', 'all_deaths_2_all_sum', 'all_deaths_1_U5_sum', 'all_deaths_2_U5_sum', 
@@ -444,14 +447,10 @@ get_cumulative_burden_by_state = function(sim_output_filepath, experiment_name, 
                                                                         'direct_death_rate_1_U5', 'direct_death_rate_2_U5', 'all_death_rate_1_U5', 'all_death_rate_2_U5', 
                                                                         'direct_death_rate_mean_all', 'direct_death_rate_mean_U5', 'all_death_rate_mean_all', 'all_death_rate_mean_U5'))]
     
-    if(mean_across_seeds){
-      df_aggregated = df_aggregated %>% group_by(State) %>%
-        summarise_all(mean, na.rm=TRUE)
-    }
     write.csv(df_aggregated, output_filename, row.names=FALSE)
   }
   if(mean_across_seeds){
-    df_aggregated = df_aggregated %>% group_by(State) %>%
+    df_aggregated = df_aggregated %>% group_by(across(all_of(group_col))) %>%
       summarise_all(mean, na.rm=TRUE)
   }
   return(df_aggregated)
@@ -701,28 +700,30 @@ get_relative_burden = function(sim_output_filepath, reference_experiment_name, c
 
 
 # get relative burden by state for grid plot
-get_relative_burden_by_state = function(sim_output_filepath, reference_experiment_name, comparison_experiment_name, comparison_scenario_name, start_year, end_year, admin_pop, district_subset='allDistricts', cur_admins='all', 
+get_relative_burden_by_state = function(sim_output_filepath, reference_experiment_name, comparison_experiment_name, comparison_scenario_name, start_year, end_year, admin_pop, district_subset='allDistricts', cur_admins='all', group_col='State',
                                LLIN2y_flag=FALSE, overwrite_files=FALSE, align_seeds=TRUE ){
   #'  @description get relative change in U5 and all-age burden when comparing between two simulations in specified years and in specified districts (for all malaria metrics, separate values for each seed)
+  #'  @param group_col column in admin_pop used to group LGAs (default 'State'; e.g. 'Funder' to group by funder)
   #'  @return data frame where each row is a seed and each column is the relative change of different burden metrics, calculated as (reference-comparison) / reference:
-  
-  reference_df = get_cumulative_burden_by_state(sim_output_filepath=sim_output_filepath, experiment_name=reference_experiment_name, start_year=start_year, end_year=end_year, admin_pop=admin_pop, LLIN2y_flag=LLIN2y_flag, overwrite_files=overwrite_files)
-  comparison_df = get_cumulative_burden_by_state(sim_output_filepath=sim_output_filepath, experiment_name=comparison_experiment_name, start_year=start_year, end_year=end_year, admin_pop=admin_pop, LLIN2y_flag=LLIN2y_flag, overwrite_files=overwrite_files)
-  
+
+  reference_df = get_cumulative_burden_by_state(sim_output_filepath=sim_output_filepath, experiment_name=reference_experiment_name, start_year=start_year, end_year=end_year, admin_pop=admin_pop, group_col=group_col, LLIN2y_flag=LLIN2y_flag, overwrite_files=overwrite_files)
+  comparison_df = get_cumulative_burden_by_state(sim_output_filepath=sim_output_filepath, experiment_name=comparison_experiment_name, start_year=start_year, end_year=end_year, admin_pop=admin_pop, group_col=group_col, LLIN2y_flag=LLIN2y_flag, overwrite_files=overwrite_files)
+
   if(align_seeds){  # compare one run seed against the matching run seed in the other experiment
-    # align seeds and states into same order
-    reference_df = reference_df[order(reference_df$State, reference_df$Run_Number),]
-    comparison_df = comparison_df[order(comparison_df$State, comparison_df$Run_Number),]
+    # align seeds and groups into same order
+    reference_df = reference_df[order(reference_df[[group_col]], reference_df$Run_Number),]
+    comparison_df = comparison_df[order(comparison_df[[group_col]], comparison_df$Run_Number),]
   } else{  # compare the averages across all seeds from one experiment against the average from the other experiment
-    reference_df = reference_df %>% group_by(State) %>% summarise_all(mean)
-    comparison_df = comparison_df %>% group_by(State) %>% summarise_all(mean)
-    # align states into same order
-    reference_df = reference_df[order(reference_df$State),]
-    comparison_df = comparison_df[order(comparison_df$State),]
+    reference_df = reference_df %>% group_by(across(all_of(group_col))) %>% summarise_all(mean)
+    comparison_df = comparison_df %>% group_by(across(all_of(group_col))) %>% summarise_all(mean)
+    # align groups into same order
+    reference_df = reference_df[order(reference_df[[group_col]]),]
+    comparison_df = comparison_df[order(comparison_df[[group_col]]),]
   }
-  relative_burden_df = data.frame('State'=reference_df$State, 'Run_Number'=reference_df$Run_Number)
+  relative_burden_df = data.frame(Run_Number=reference_df$Run_Number)
+  relative_burden_df[[group_col]] = reference_df[[group_col]]
   # iterate through burden indicators, calculating relative burden and adding to dataframe
-  burden_indicators = colnames(reference_df)[-which(colnames(reference_df) %in% c('State', 'Run_Number'))]
+  burden_indicators = colnames(reference_df)[-which(colnames(reference_df) %in% c(group_col, 'Run_Number'))]
   for(bb in 1:length(burden_indicators)){
     # relative_burden_cur = (comparison_df[[burden_indicators[bb]]] - reference_df[[burden_indicators[bb]]]) / reference_df[[burden_indicators[bb]]]
     relative_burden_cur = (reference_df[[burden_indicators[bb]]] - comparison_df[[burden_indicators[bb]]]) / reference_df[[burden_indicators[bb]]]
@@ -839,6 +840,29 @@ get_difference_burden_by_state = function(sim_output_filepath, reference_experim
 # timeseries of simulation burden and/or interventions
 ####################################################################################
 
+# Helper: flag years built from fewer than the expected number of months (max observed months/year).
+#   set_na=TRUE  -> blank those years (used for SUM-based annual totals, which would be undercounted and
+#                   misleadingly read as 'lower burden'); shown as a gap rather than a low value.
+#   set_na=FALSE -> warn only (used for MEAN-based annual values, which are not undercounted but may be
+#                   seasonally biased if months are missing).
+# Expects a data frame with 'year' and 'n_months' columns; returns it with 'n_months' dropped.
+.flag_incomplete_annual = function(df, exp_name, burden_colname, set_na){
+  exp_mo = suppressWarnings(max(df$n_months, na.rm=TRUE))
+  if(is.finite(exp_mo)){
+    inc = which(df$n_months < exp_mo)
+    if(length(inc)){
+      it = unique(df[inc, c('year','n_months')]); it = it[order(it$year),]
+      verb = if(set_na) 'set to NA (annual sum would be undercounted)' else 'averaged over partial months (possible seasonal bias)'
+      warning(sprintf('get_burden_timeseries_exp [%s | %s]: incomplete year(s) %s: %s; expected %d months/year.',
+                      exp_name, burden_colname, verb,
+                      paste(sprintf('%s = %d mo', it$year, it$n_months), collapse='; '), exp_mo), call.=FALSE)
+      if(set_na) df$burden[inc] = NA
+    }
+  }
+  df$n_months = NULL
+  df
+}
+
 get_burden_timeseries_exp = function(exp_filepath, exp_name, district_subset, cur_admins, pop_sizes, min_year, max_year, burden_colname, age_plotted, plot_by_month=FALSE, overwrite_files=FALSE){
   #'  @description subset simulation output to appropriate admin and time period, and calculate monthly or annual mean, min, max burdens (for a specified malaria burden metric) across all runs
   #'  @return data frame where each row is a time point and there are columns for the mean, minimum, and maximum burden value across seeds, and also a column for the scenario name
@@ -887,7 +911,8 @@ get_burden_timeseries_exp = function(exp_filepath, exp_name, district_subset, cu
       cur_sim_output_agg_admin$burden = cur_sim_output_agg_admin$total_positives / cur_sim_output_agg_admin$total_population
       if(!plot_by_month){
         cur_sim_output_agg_admin = cur_sim_output_agg_admin %>% dplyr::group_by(year, Run_Number) %>% # take average PfPR across months
-          dplyr::summarise(burden = mean(burden))
+          dplyr::summarise(burden = mean(burden), n_months = dplyr::n(), .groups='drop')
+        cur_sim_output_agg_admin = .flag_incomplete_annual(cur_sim_output_agg_admin, exp_name, burden_colname, set_na=FALSE)
       }
       
     } else if((grepl('mLBW', burden_colname)) | (grepl('stillbirth', burden_colname))){
@@ -901,7 +926,8 @@ get_burden_timeseries_exp = function(exp_filepath, exp_name, district_subset, cu
       cur_sim_output_agg_admin$burden = cur_sim_output_agg_admin$true_burden / cur_sim_output_agg_admin$true_population * 1000
       if(!plot_by_month){
         cur_sim_output_agg_admin = cur_sim_output_agg_admin %>% dplyr::group_by(year, Run_Number) %>% # take average mLBW or stillbirths per birth across months to get annual average rate
-          dplyr::summarise(burden = mean(burden))
+          dplyr::summarise(burden = mean(burden), n_months = dplyr::n(), .groups='drop')
+        cur_sim_output_agg_admin = .flag_incomplete_annual(cur_sim_output_agg_admin, exp_name, burden_colname, set_na=FALSE)
       }
     }else{
       # rescale case (or death) numbers to number present in full admin (with true population instead of simulated population size)
@@ -914,24 +940,37 @@ get_burden_timeseries_exp = function(exp_filepath, exp_name, district_subset, cu
       cur_sim_output_agg_admin$burden = cur_sim_output_agg_admin$true_burden / cur_sim_output_agg_admin$true_population * 1000
       if(!plot_by_month){
         cur_sim_output_agg_admin = cur_sim_output_agg_admin %>% dplyr::group_by(year, Run_Number) %>% # take sum across months to get annual burden
-          dplyr::summarise(burden = sum(burden))
+          dplyr::summarise(burden = sum(burden), n_months = dplyr::n(), .groups='drop')
+        cur_sim_output_agg_admin = .flag_incomplete_annual(cur_sim_output_agg_admin, exp_name, burden_colname, set_na=TRUE)
       }
     }
     
-    # take average, max, and min burdens across simulation seeds
+    # take average, max, and min burdens across simulation seeds. Track how many seeds contributed to
+    # each time point: groups with NO data become NA (a visible gap), and points summarised over only
+    # SOME of the seeds are warned about (the mean is then over the available seeds, not all of them).
+    n_runs_total = length(unique(cur_sim_output_agg_admin$Run_Number))
     if(plot_by_month){
       cur_sim_output_agg = as.data.frame(cur_sim_output_agg_admin) %>% dplyr::select(month, year, date, burden) %>%
         dplyr::group_by(month, year, date) %>%
-        dplyr::summarise(mean_burden = mean(burden),
-                         max_burden = max(burden),
-                         min_burden = min(burden))
+        dplyr::summarise(n_runs_present = sum(!is.na(burden)),
+                         mean_burden = if(all(is.na(burden))) NA_real_ else mean(burden, na.rm=TRUE),
+                         max_burden  = if(all(is.na(burden))) NA_real_ else max(burden, na.rm=TRUE),
+                         min_burden  = if(all(is.na(burden))) NA_real_ else min(burden, na.rm=TRUE), .groups='drop')
     } else{
       cur_sim_output_agg = as.data.frame(cur_sim_output_agg_admin) %>% dplyr::select(year, burden) %>%
         dplyr::group_by(year) %>%
-        dplyr::summarise(mean_burden = mean(burden),
-                         max_burden = max(burden),
-                         min_burden = min(burden))
+        dplyr::summarise(n_runs_present = sum(!is.na(burden)),
+                         mean_burden = if(all(is.na(burden))) NA_real_ else mean(burden, na.rm=TRUE),
+                         max_burden  = if(all(is.na(burden))) NA_real_ else max(burden, na.rm=TRUE),
+                         min_burden  = if(all(is.na(burden))) NA_real_ else min(burden, na.rm=TRUE), .groups='drop')
     }
+    partial = which(cur_sim_output_agg$n_runs_present > 0 & cur_sim_output_agg$n_runs_present < n_runs_total)
+    if(length(partial)){
+      warning(sprintf('get_burden_timeseries_exp [%s | %s]: %d time point(s) summarised over only some of %d runs (mean over available runs): year(s) %s.',
+                      exp_name, burden_colname, length(partial), n_runs_total,
+                      paste(sprintf('%s (%d run[s])', cur_sim_output_agg$year[partial], cur_sim_output_agg$n_runs_present[partial]), collapse='; ')), call.=FALSE)
+    }
+    cur_sim_output_agg$n_runs_present = NULL
     
     cur_sim_output_agg$scenario = exp_name
     write.csv(cur_sim_output_agg, output_filename, row.names=FALSE)
@@ -1014,19 +1053,22 @@ get_burden_timeseries_by_lga = function(exp_filepath, exp_name, pop_filepath, ov
 
 
 
-get_burden_timeseries_by_state = function(exp_filepath, exp_name, pop_filepath, overwrite_files=FALSE){
+get_burden_timeseries_by_state = function(exp_filepath, exp_name, pop_filepath, group_col='State', overwrite_files=FALSE){
   #'  @description subset simulation output to appropriate admin and time period, and calculate annual mean burden (for a set of malaria burden metric) across all runs
+  #'  @param group_col column in the pop file used to group LGAs (default 'State'; e.g. 'Funder'). Rates are
+  #'        population-weighted within each group (Sum of numerators / Sum of population). Cache filename uses
+  #'        tolower(group_col) so 'State' keeps the existing 'by_state' name.
   #'  @return data frame where each row is a time point and there are columns for the mean, minimum, and maximum burden value across seeds, and also a column for the scenario name
   # Assumes malariaBurden_withAdjustments.csv contains the following burden colnames: c('PfPR_U5', 'PfPR_MiP_adjusted', 'New_clinical_cases_U5', 'New_Clinical_Cases', 'direct_mortality_nonMiP_U5_mean', 'direct_mortality_nonMiP_mean', 'total_mortality_U5_mean', 'total_mortality_mean')
 
   # check whether file already exists, otherwise create new dataframe
-  output_filename = paste0(exp_filepath, '/timeseries_burden_annual_by_state.csv')
+  output_filename = paste0(exp_filepath, '/timeseries_burden_annual_by_', tolower(group_col), '.csv')
   if(file.exists(output_filename) & !overwrite_files){
     cur_sim_output_agg = read.csv(output_filename)
   } else{
     # read in information about LGAs
     admin_info = read.csv(pop_filepath)
-    admin_info = admin_info[,c('admin_name','pop_size','State')]
+    admin_info = admin_info[,c('admin_name','pop_size',group_col)]
 
     # read in simulation information, subset to appropriate years
     cur_sim_output = fread(file = paste0(exp_filepath, '/malariaBurden_withAdjustments.csv'))
@@ -1051,8 +1093,8 @@ get_burden_timeseries_by_state = function(exp_filepath, exp_name, pop_filepath, 
         num_total_mortality_U5 = total_mortality_U5_mean / Pop_U5 * true_population_U5,
         num_total_mortality_all = total_mortality_mean / Statistical_Population * true_population_all
       ) %>%
-      dplyr::select(Run_Number, State, year, true_population_U5, true_population_all, positives_U5, positives_all, num_cases_U5, num_cases_all, num_direct_mortality_U5, num_direct_mortality_all, num_total_mortality_U5, num_total_mortality_all) %>%
-      group_by(Run_Number, State, year) %>%
+      dplyr::select(Run_Number, all_of(group_col), year, true_population_U5, true_population_all, positives_U5, positives_all, num_cases_U5, num_cases_all, num_direct_mortality_U5, num_direct_mortality_all, num_total_mortality_U5, num_total_mortality_all) %>%
+      group_by(Run_Number, across(all_of(group_col)), year) %>%
       summarise_all(sum) %>%
       ungroup() %>%
       mutate(  # take average population over 12 months rather than sum over all months
@@ -1072,7 +1114,7 @@ get_burden_timeseries_by_state = function(exp_filepath, exp_name, pop_filepath, 
       total_mortality_pp_U5 = num_total_mortality_U5 / true_population_U5,
       total_mortality_pp_all = num_total_mortality_all / true_population_all
       ) %>%
-      group_by(State, year) %>%
+      group_by(across(all_of(group_col)), year) %>%
       summarise_all(mean) %>%
       ungroup()
 
@@ -1395,9 +1437,11 @@ get_cm_timeseries_exp = function(cm_filepath, pop_sizes, end_year, exp_name, cur
 get_ave_burden_by_state = function(sim_future_output_dir, pop_filepath,
                                    barplot_start_year, barplot_end_year, 
                                    pyr, chw_cov,
-                                   scenario_names, experiment_names, scenario_palette, LLIN2y_flag=FALSE, overwrite_files=FALSE, 
+                                   scenario_names, experiment_names, scenario_palette, group_col='State', LLIN2y_flag=FALSE, overwrite_files=FALSE,
                                    burden_metric_subset=c(), include_to_present=TRUE, file_suffix=''){
-  
+  # group_col: admin_pop column used to group LGAs (default 'State'; e.g. 'Funder'). Output filenames use
+  # tolower(group_col) so 'State' reproduces the existing '_by_state_' names and 'Funder' -> '_by_funder_'.
+  group_lc = tolower(group_col)
   admin_pop = read.csv(pop_filepath)
   
   # burden metrics
@@ -1421,11 +1465,11 @@ get_ave_burden_by_state = function(sim_future_output_dir, pop_filepath,
   burden_all_df = data.frame()
   for(ss in exp_start_index:length(scenario_names)){
     scenario_name_cur = scenario_names[ss]
-    burden_df = get_cumulative_burden_by_state(sim_output_filepath=sim_future_output_dir, experiment_name=scenario_name_cur, start_year=barplot_start_year, end_year=barplot_end_year, admin_pop=admin_pop, LLIN2y_flag=LLIN2y_flag, overwrite_files=overwrite_files)
+    burden_df = get_cumulative_burden_by_state(sim_output_filepath=sim_future_output_dir, experiment_name=scenario_name_cur, start_year=barplot_start_year, end_year=barplot_end_year, admin_pop=admin_pop, group_col=group_col, LLIN2y_flag=LLIN2y_flag, overwrite_files=overwrite_files)
     burden_df$scenario = scenario_name_cur
-                                             
+
     # only save relevant columns for plotting
-    burden_df = burden_df[,which(colnames(burden_df) %in% c('scenario', 'Run_Number', 'State', burden_colnames))]
+    burden_df = burden_df[,which(colnames(burden_df) %in% c('scenario', 'Run_Number', group_col, burden_colnames))]
     if(nrow(burden_all_df) == 0){
       burden_all_df = burden_df
     }else{
@@ -1437,33 +1481,33 @@ get_ave_burden_by_state = function(sim_future_output_dir, pop_filepath,
   burden_all_df$scenario = factor(burden_all_df$scenario, levels=scenario_names[exp_start_index:length(scenario_names)])
   
   # get average across runs
-  burden_average_df = burden_all_df %>% group_by(State, scenario) %>%
+  burden_average_df = burden_all_df %>% group_by(across(all_of(group_col)), scenario) %>%
     summarise_all(mean, na.rm=TRUE)
-    
-  write.csv(burden_average_df, paste0(sim_future_output_dir, '/_plots/','average_burden_by_state_', barplot_start_year,'_', barplot_end_year, file_suffix,'.csv'), row.names=FALSE)
-  
-  # if the burden metrics include PfPR, create separate table with states as rows and scenarios as columns
+
+  write.csv(burden_average_df, paste0(sim_future_output_dir, '/_plots/','average_burden_by_', group_lc, '_', barplot_start_year,'_', barplot_end_year, file_suffix,'.csv'), row.names=FALSE)
+
+  # if the burden metrics include PfPR, create separate table with groups as rows and scenarios as columns
   if('average_PfPR_all' %in% colnames(burden_all_df)){
-    pfpr_df = burden_average_df %>% dplyr::select(State, scenario, average_PfPR_all) %>%
+    pfpr_df = burden_average_df %>% dplyr::select(all_of(group_col), scenario, average_PfPR_all) %>%
       mutate(average_PfPR_all = round(average_PfPR_all,2)) %>%
-      pivot_wider(id_cols=State, names_from=scenario, values_from=average_PfPR_all)
-    write.csv(pfpr_df, paste0(sim_future_output_dir, '/_plots/','average_PfPR_allAge_by_state_', barplot_start_year,'_', barplot_end_year, file_suffix,'.csv'), row.names=FALSE)
+      pivot_wider(id_cols=all_of(group_col), names_from=scenario, values_from=average_PfPR_all)
+    write.csv(pfpr_df, paste0(sim_future_output_dir, '/_plots/','average_PfPR_allAge_by_', group_lc, '_', barplot_start_year,'_', barplot_end_year, file_suffix,'.csv'), row.names=FALSE)
     # percentage-formatted version (e.g., '5.2%' instead of 0.05)
-    pfpr_pct_df = burden_average_df %>% dplyr::select(State, scenario, average_PfPR_all) %>%
+    pfpr_pct_df = burden_average_df %>% dplyr::select(all_of(group_col), scenario, average_PfPR_all) %>%
       mutate(average_PfPR_all = paste0(round(average_PfPR_all * 100, 1), '%')) %>%
-      pivot_wider(id_cols=State, names_from=scenario, values_from=average_PfPR_all)
-    write.csv(pfpr_pct_df, paste0(sim_future_output_dir, '/_plots/','average_PfPR_allAge_by_state_', barplot_start_year,'_', barplot_end_year, file_suffix,'_percent.csv'), row.names=FALSE)
+      pivot_wider(id_cols=all_of(group_col), names_from=scenario, values_from=average_PfPR_all)
+    write.csv(pfpr_pct_df, paste0(sim_future_output_dir, '/_plots/','average_PfPR_allAge_by_', group_lc, '_', barplot_start_year,'_', barplot_end_year, file_suffix,'_percent.csv'), row.names=FALSE)
   }
   if('average_PfPR_U5' %in% colnames(burden_all_df)){
-    pfpr_df = burden_average_df %>% dplyr::select(State, scenario, average_PfPR_U5) %>%
+    pfpr_df = burden_average_df %>% dplyr::select(all_of(group_col), scenario, average_PfPR_U5) %>%
       mutate(average_PfPR_U5 = round(average_PfPR_U5,2)) %>%
-      pivot_wider(id_cols=State, names_from=scenario, values_from=average_PfPR_U5)
-    write.csv(pfpr_df, paste0(sim_future_output_dir, '/_plots/','average_PfPR_U5_by_state_', barplot_start_year,'_', barplot_end_year, file_suffix,'.csv'), row.names=FALSE)
+      pivot_wider(id_cols=all_of(group_col), names_from=scenario, values_from=average_PfPR_U5)
+    write.csv(pfpr_df, paste0(sim_future_output_dir, '/_plots/','average_PfPR_U5_by_', group_lc, '_', barplot_start_year,'_', barplot_end_year, file_suffix,'.csv'), row.names=FALSE)
     # percentage-formatted version (e.g., '5.2%' instead of 0.05)
-    pfpr_pct_df = burden_average_df %>% dplyr::select(State, scenario, average_PfPR_U5) %>%
+    pfpr_pct_df = burden_average_df %>% dplyr::select(all_of(group_col), scenario, average_PfPR_U5) %>%
       mutate(average_PfPR_U5 = paste0(round(average_PfPR_U5 * 100, 1), '%')) %>%
-      pivot_wider(id_cols=State, names_from=scenario, values_from=average_PfPR_U5)
-    write.csv(pfpr_pct_df, paste0(sim_future_output_dir, '/_plots/','average_PfPR_U5_by_state_', barplot_start_year,'_', barplot_end_year, file_suffix,'_percent.csv'), row.names=FALSE)
+      pivot_wider(id_cols=all_of(group_col), names_from=scenario, values_from=average_PfPR_U5)
+    write.csv(pfpr_pct_df, paste0(sim_future_output_dir, '/_plots/','average_PfPR_U5_by_', group_lc, '_', barplot_start_year,'_', barplot_end_year, file_suffix,'_percent.csv'), row.names=FALSE)
   }
 
 }

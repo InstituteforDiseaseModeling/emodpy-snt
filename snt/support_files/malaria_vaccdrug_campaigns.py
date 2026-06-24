@@ -12,7 +12,7 @@ def add_vaccdrug_campaign(campaign, campaign_type: str = 'SMC', start_days: list
                           vaccine_param_dict: dict = None, drug_param_dict: dict = None,
                           delay_distribution_dict: dict = None, node_ids: list = None,
                           ind_property_restrictions: list = None,
-                          listening_duration: int = -1,
+                          listening_durations: list = None,
                           target_residents_only: bool = True,
                           trigger_condition_list: list = None,
                           check_eligibility_at_trigger: bool = False,
@@ -97,7 +97,7 @@ def add_vaccdrug_campaign(campaign, campaign_type: str = 'SMC', start_days: list
             individuals must have to receive the diagnostic intervention.
             For example, ``[{"IndividualProperty1":"PropertyValue1"},
             {"IndividualProperty2":"PropertyValue2"}]``. Default is no restrictions.
-        listening_duration: Length of time, in days, for which the triggered event will be listening for the triggers
+        listening_durations: Length of time, in days, for which the triggered event will be listening for the triggers
         target_residents_only: When set to True the intervention is only distributed to individuals that began the
             simulation in that node.
         trigger_condition_list: List of events that will begin a triggerable
@@ -126,9 +126,18 @@ def add_vaccdrug_campaign(campaign, campaign_type: str = 'SMC', start_days: list
         receiving_drugs_event_name = 'Received_Vehicle'
     if not receiving_vaccine_event_name:
         receiving_vaccine_event_name = f'Received_{campaign_type}_VaccDrug'
+    if listening_durations is None:
+        try:
+            n = len(coverages)
+        except TypeError:
+            n = 1
+        listening_durations = [-1] * n
 
     if campaign_type == 'SMC':
         if receiving_drugs_event:
+            if len(set(listening_durations)) > 1:
+                raise ValueError(
+                    'You passed in different listening durations for each event. That is not currently supported for SMC. \n')
             add_vaccdrug_smc(campaign, start_days=start_days, coverages=coverages,
                              vaccine_param_dict=vaccine_param_dict, drug_param_dict=drug_param_dict,
                              target_group=target_group,
@@ -136,7 +145,7 @@ def add_vaccdrug_campaign(campaign, campaign_type: str = 'SMC', start_days: list
                              receiving_vaccine_event=receiving_vaccine_event_name,
                              node_ids=node_ids,
                              ind_property_restrictions=ind_property_restrictions,
-                             listening_duration=listening_duration,
+                             listening_duration=listening_durations[0],
                              trigger_condition_list=trigger_condition_list,
                              target_residents_only=target_residents_only,
                              check_eligibility_at_trigger=check_eligibility_at_trigger)
@@ -163,7 +172,7 @@ def add_vaccdrug_campaign(campaign, campaign_type: str = 'SMC', start_days: list
                              delay_distribution_dict=delay_distribution_dict,
                              node_ids=node_ids,
                              ind_property_restrictions=ind_property_restrictions,
-                             listening_duration=listening_duration,
+                             listening_durations=listening_durations,
                              target_residents_only=target_residents_only,
                              check_eligibility_at_trigger=check_eligibility_at_trigger)
         else:
@@ -174,7 +183,7 @@ def add_vaccdrug_campaign(campaign, campaign_type: str = 'SMC', start_days: list
                          delay_distribution_dict=delay_distribution_dict,
                          node_ids=node_ids,
                          ind_property_restrictions=ind_property_restrictions,
-                         listening_duration=listening_duration,
+                         listening_durations=listening_durations,
                          target_residents_only=target_residents_only)
     else:
         raise ValueError('Invalid campaign_type specified, valid options: "SMC" or "PMC"')
@@ -396,7 +405,7 @@ def add_vaccdrug_pmc(campaign, start_days: list, coverages: list,
                      num_iiv_groups: int = 1,
                      vaccine_param_dict: dict = None, drug_param_dict: dict = None,
                      receiving_vaccine_event: str = None, receiving_drugs_event: str = None,
-                     listening_duration: int = -1, node_ids: list = None,
+                     listening_durations: list = None, node_ids: list = None,
                      delay_distribution_dict: dict = None,
                      ind_property_restrictions: dict = None, target_residents_only: int = 1,
                      check_eligibility_at_trigger: bool = False):
@@ -412,7 +421,7 @@ def add_vaccdrug_pmc(campaign, start_days: list, coverages: list,
         drug_param_dict:
         receiving_vaccine_event:
         receiving_drugs_event:
-        listening_duration:
+        listening_durations:
         node_ids:
         delay_distribution_dict:
         ind_property_restrictions:
@@ -440,14 +449,17 @@ def add_vaccdrug_pmc(campaign, start_days: list, coverages: list,
 
     pmc_touchpoints = list(target_group.values())
     pmc_event_names = [f'PMC_{x + 1}' for x in range(len(pmc_touchpoints))]
-    if len(pmc_touchpoints) != len(coverages) or len(pmc_touchpoints) != len(
-            delay_distribution_dict['delay_distribution_name']):
+    if listening_durations is None:
+        listening_durations = [-1] * len(coverages)
+    if len(pmc_touchpoints) != len(coverages) or len(pmc_touchpoints) != len(delay_distribution_dict['delay_distribution_name']) or len(pmc_touchpoints) != len(listening_durations) or len(pmc_touchpoints) != len(start_days):
         raise ValueError(f"Length of target_groups's values - {len(pmc_touchpoints)}, should be equal to "
                          f"length of coverages - "
-                         f"{len(coverages)} and length of the list of delay distributions "
-                         f"{len(delay_distribution_dict['delay_distribution_name'])} but it's not.\n")
+                         f"{len(coverages)} and length of the list of delay distributions - "
+                         f"{len(delay_distribution_dict['delay_distribution_name'])} and length of listening durations "f"{len(listening_durations)}  and length of start days - "
+                         f"{len(start_days)} but they are not all equal.\n")
 
-    for i, (tp_time_trigger, cov, event_name) in enumerate(zip(pmc_touchpoints, coverages, pmc_event_names)):
+
+    for i, (tp_time_trigger, start_day, duration, cov, event_name) in enumerate(zip(pmc_touchpoints, start_days, listening_durations, coverages, pmc_event_names)):
 
         delay_distribution_name = list(delay_distribution_dict['delay_distribution_name'])[i]
         mean = list(delay_distribution_dict['delay_distribution_mean'])[i]
@@ -473,19 +485,19 @@ def add_vaccdrug_pmc(campaign, start_days: list, coverages: list,
         # and slipping it into the triggered intervention
         broadcast_event = BroadcastEvent(campaign, event_name)
         delayed_intervention = DelayedIntervention(campaign, Configs=[broadcast_event], Delay_Dict=delay_distribution)
-        add_triggered_campaign_delay_event(campaign, start_day=start_days[0],
+        add_triggered_campaign_delay_event(campaign, start_day=start_day,
                                            trigger_condition_list=['Births'],
                                            demographic_coverage=1,
-                                           listening_duration=listening_duration,
+                                           listening_duration=duration,
                                            individual_intervention=delayed_intervention)
 
         add_drug_campaign(campaign, campaign_type='MDA',
                           drug_code='Vehicle',
-                          start_days=[start_days[0]],
+                          start_days=[start_day],
                           coverage=cov,
                           repetitions=-1,
                           tsteps_btwn_repetitions=-1,
-                          listening_duration=listening_duration,
+                          listening_duration=duration,
                           trigger_condition_list=[event_name],
                           ind_property_restrictions=ind_property_restrictions,
                           receiving_drugs_event_name=f'{receiving_drugs_event}_{i + 1}',
@@ -511,8 +523,9 @@ def add_vaccdrug_pmc(campaign, start_days: list, coverages: list,
                                                              scale=eff_sd)
 
                 add_triggered_vaccine(campaign,
-                                      start_day=start_days[0],
+                                      start_day=start_day,
                                       trigger_condition_list=[f'{receiving_drugs_event}_{i + 1}'],
+                                      listening_duration=duration,
                                       demographic_coverage=1,
                                       ind_property_restrictions=[{'DrugResponseGroup': val}],
                                       broadcast_event=receiving_vaccine_event,
@@ -525,8 +538,9 @@ def add_vaccdrug_pmc(campaign, start_days: list, coverages: list,
                                       )
         else:
             add_triggered_vaccine(campaign,
-                                  start_day=start_days[0],
+                                  start_day=start_day,
                                   trigger_condition_list=[f'{receiving_drugs_event}_{i + 1}'],
+                                  listening_duration=duration,
                                   demographic_coverage=1,
                                   ind_property_restrictions=ind_property_restrictions,
                                   broadcast_event=receiving_vaccine_event,
@@ -549,7 +563,7 @@ def add_vacc_pmc(campaign, start_days: list, coverages: list, target_group: dict
                  num_iiv_groups: int = 1,
                  vaccine_param_dict: dict = None,
                  receiving_vaccine_event: str = None,
-                 listening_duration: int = -1,
+                 listening_durations: list = None,
                  node_ids: list = None,
                  delay_distribution_dict: dict = None,
                  ind_property_restrictions: dict = None, target_residents_only: bool = True):
@@ -563,12 +577,16 @@ def add_vacc_pmc(campaign, start_days: list, coverages: list, target_group: dict
     pmc_touchpoints = list(target_group.values())
     pmc_event_names = [f'PMC_{x + 1}' for x in range(len(pmc_touchpoints))]
     vacc_pmc_offset = 17  # - x days since no drug clearing event, hence delayed efficacy
-    if len(pmc_touchpoints) != len(coverages):
+    if listening_durations is None:
+        listening_durations = [-1] * len(coverages)
+    if len(pmc_touchpoints) != len(coverages) or len(pmc_touchpoints) != len(delay_distribution_dict['delay_distribution_name']) or len(pmc_touchpoints) != len(listening_durations) or len(pmc_touchpoints) != len(start_days):
         raise ValueError(f"Length of target_groups's values - {len(pmc_touchpoints)}, should be equal to "
                          f"length of coverages - "
-                         f"{len(coverages)}, but it's not.\n")
+                         f"{len(coverages)} and length of the list of delay distributions - "
+                         f"{len(delay_distribution_dict['delay_distribution_name'])} and length of listening durations "f"{len(listening_durations)}  and length of start days - "
+                         f"{len(start_days)} but they are not all equal.\n")
 
-    for i, (tp_time_trigger, cov, event_name) in enumerate(zip(pmc_touchpoints, coverages, pmc_event_names)):
+    for i, (tp_time_trigger, start_day, duration, cov, event_name) in enumerate(zip(pmc_touchpoints, start_days, listening_durations, coverages, pmc_event_names)):
         tp_time_trigger = tp_time_trigger - vacc_pmc_offset
         delay_distribution_name = list(delay_distribution_dict['delay_distribution_name'])[i]
         mean = list(delay_distribution_dict['delay_distribution_mean'])[i]
@@ -594,10 +612,10 @@ def add_vacc_pmc(campaign, start_days: list, coverages: list, target_group: dict
         # and slipping it into the triggered intervention
         broadcast_event = BroadcastEvent(campaign, event_name)
         delayed_intervention = DelayedIntervention(campaign, Configs=[broadcast_event], Delay_Dict=delay_distribution)
-        add_triggered_campaign_delay_event(campaign, start_day=start_days[0],
+        add_triggered_campaign_delay_event(campaign, start_day=start_day,
                                            trigger_condition_list=['Births'],
                                            demographic_coverage=1,
-                                           listening_duration=listening_duration,
+                                           listening_duration=duration,
                                            node_ids=node_ids,
                                            individual_intervention=delayed_intervention)
 
@@ -617,8 +635,9 @@ def add_vacc_pmc(campaign, start_days: list, coverages: list, target_group: dict
                                                              loc=vaccine_initial_effect,
                                                              scale=eff_sd)
                 add_triggered_vaccine(campaign,
-                                      start_day=start_days[0],
+                                      start_day=start_day,
                                       trigger_condition_list=[event_name],
+                                      listening_duration=duration,
                                       demographic_coverage=cov,
                                       ind_property_restrictions=[{'DrugResponseGroup': val}],
                                       node_ids=node_ids,
@@ -633,8 +652,9 @@ def add_vacc_pmc(campaign, start_days: list, coverages: list, target_group: dict
 
         else:
             add_triggered_vaccine(campaign,
-                                  start_day=start_days[0],
+                                  start_day=start_day,
                                   trigger_condition_list=[event_name],
+                                  listening_duration=duration,
                                   demographic_coverage=cov,
                                   ind_property_restrictions=ind_property_restrictions,
                                   node_ids=node_ids,

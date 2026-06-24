@@ -16,6 +16,7 @@ def update_basic_params(config, manifest, project_path):
     config.parameters['logLevel_JsonConfigurable'] = 'ERROR'
     config.parameters['logLevel_VectorHabitat'] = 'ERROR'
     config.parameters['logLevel_StandardEventCoordinator'] = 'ERROR'
+    config.parameters['logLevel_InterventionsContainer'] = 'ERROR'
     config.parameters['Habitat_Multiplier'] = 1
     config.parameters.Enable_Default_Reporting = 0
     config.parameters.Enable_Vector_Species_Report = 0
