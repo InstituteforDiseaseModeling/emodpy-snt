@@ -86,6 +86,7 @@ def submit_experiment_nonblocking(sim_script, suite_id, idx, scenario_file, log_
             text=True
         )
     print(f"Launched scenario {idx} → PID {proc.pid}, log: {log_file_path}")
+    return proc.pid
 
 def update_tracking_file(suite_name, suite_id, experiment_type):
     """
@@ -132,16 +133,22 @@ def main():
 
     # Submit simulations to COMPS in non-blocking mode.
     # Iterate over rows with the status 'run' in the scenario file. And submit them to COMPS.
+    proc_list = []
     for idx in df_run.index:
         print(f"Before submit: Experiment at row {idx} status: '{df.loc[idx, 'status']}' in CSV file.")
         # log file path:
         log_path = os.path.join(log_dir, f"scenario_{experiment_type}_{idx}.log")
         # submit the experiment to COMPS in non-blocking mode with background processes.
         # to see progress, open the log file
-        submit_experiment_nonblocking(sim_script, suite_id, idx, scenario_file, log_path)
+        proc_id  = submit_experiment_nonblocking(sim_script, suite_id, idx, scenario_file, log_path)
+        proc_list.append(proc_id)
         df.loc[idx, 'status'] = 'queued'
         print(f"After submit: Experiment at row {idx} status: '{df.loc[idx, 'status']}' in CSV file.")
         print(f"Dispatched experiment at row {idx} to COMPS\n")
+
+    with open("pid_list.txt", "w") as f:
+        for pid in proc_list:
+            f.write(f"{pid}\n")
 
     df.to_csv(scenario_file, index=False)
     print("\nAll experiments dispatched in non-blocking mode.")
